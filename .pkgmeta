@@ -1,0 +1,19 @@
+# BigWigs packager configuration — https://github.com/BigWigsMods/packager
+package-as: Gargul_PityPoints
+
+# Libraries are vendored in Libs/ and committed, so don't fetch or strip them.
+enable-nolib-creation: no
+
+# Gargul is required in game (## Dependencies in the TOC); list it on CurseForge too.
+required-dependencies:
+  - gargul
+
+# Dev-only files that shouldn't ship in the released zip.
+ignore:
+  - AGENTS.md
+  - CLAUDE.md
+  - .luacheckrc
+  - .gitignore
+  - .claude
+  - .github
+  - docs

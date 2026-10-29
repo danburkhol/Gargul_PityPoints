@@ -1,0 +1,23 @@
+## Interface: 11508, 11509, 20506, 30405, 40402, 50504, 50505
+## Title: Gargul |c00967FD2Pity Points|r
+## Notes: Soft-reserve pity points for Gargul: bonus points on rolls, a manager window, CSV export and a minimap / LDB launcher.
+## Author: danburkhol
+## Version: 0.3.2
+## IconTexture: Interface\Icons\INV_Misc_Coin_01
+## Dependencies: Gargul
+## SavedVariables: GargulPityPointsDB
+## X-Embeds: LibStub, CallbackHandler-1.0, LibDataBroker-1.1, LibDBIcon-1.0
+
+Libs\LibStub\LibStub.lua
+Libs\CallbackHandler-1.0\CallbackHandler-1.0.lua
+Libs\LibDataBroker-1.1\LibDataBroker-1.1.lua
+Libs\LibDBIcon-1.0\LibDBIcon-1.0.lua
+
+Core.lua
+Sheets.lua
+Gargul.lua
+UI\Settings.lua
+UI\Manager.lua
+UI\Log.lua
+UI\Export.lua
+UI\Broker.lua

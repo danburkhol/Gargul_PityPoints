@@ -1,0 +1,5 @@
+# Local Claude Code settings (skills under .claude/skills are committed)
+.claude/settings.local.json
+
+# Packager output when building locally
+.release/
