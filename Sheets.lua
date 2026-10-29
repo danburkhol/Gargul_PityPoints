@@ -273,6 +273,28 @@ function PP:createSheet(Data, raidKey)
     finish();
 end
 
+--- Drop one reserve from our copy of a sheet (e.g. one that shouldn't be there). Gargul's softres is untouched, and the next
+--- sync of this sheet brings the reserve back if softres.it still has it.
+function PP:removeReserve(id, key, itemID)
+    local Sheet = self:sheet(id);
+    local Items = Sheet and Sheet.Reserves[key];
+    if (not (Items and Items[itemID])) then
+        return false;
+    end
+
+    Items[itemID] = nil;
+    if (not next(Items)) then
+        Sheet.Reserves[key] = nil;
+    end
+
+    tinsert(Sheet.Syncs, {
+        at = time(), Added = {}, Removed = { { key, itemID, }, }, reserves = countPairs(Sheet.Reserves), by = self:me(),
+    });
+
+    self:notify();
+    return true;
+end
+
 function PP:updateSheet(Sheet, Data)
     local Added, Removed = {}, {};
 

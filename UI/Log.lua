@@ -18,6 +18,60 @@ local COLUMNS = {
 local Log;
 local State = { raidKey = nil, search = "", Shown = {}, };
 
+StaticPopupDialogs["GARGULPITYPOINTS_UNDO_IMPORT"] = {
+    text = "%s",
+    button1 = "Undo import",
+    button2 = CANCEL,
+    OnAccept = function (_, data) data.accept(); end,
+    showAlert = true,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+};
+
+StaticPopupDialogs["GARGULPITYPOINTS_NOTICE"] = {
+    text = "%s",
+    button1 = OKAY,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+};
+
+local function confirmUndoImport(id)
+    local Import = PP:import(id);
+    local Blockers = PP:importUndoBlockers(id);
+
+    if (Blockers) then
+        local Lines = { "This import can't be undone." };
+        for i, line in ipairs(Blockers) do
+            if (i > 8) then
+                tinsert(Lines, ("... and %d more"):format(#Blockers - 8));
+                break;
+            end
+            tinsert(Lines, line);
+        end
+        if (Import and not Import.undoneAt) then
+            tinsert(Lines, "\nThese points changed after the import. Set them back by hand first, or leave the import as it is.");
+        end
+        StaticPopup_Show("GARGULPITYPOINTS_NOTICE", table.concat(Lines, "\n"));
+        return;
+    end
+
+    local text = ("Undo the import of %s by %s?\n\nIts %d changes go back to the points from before the import."):format(
+        date("%Y-%m-%d %H:%M", Import.at), Import.by or "?", #PP:importEntries(id)
+    );
+    StaticPopup_Show("GARGULPITYPOINTS_UNDO_IMPORT", text, nil, {
+        accept = function ()
+            local count = PP:undoImport(id);
+            if (count) then
+                PP:print(("Import undone: %d points put back."):format(count));
+            end
+        end,
+    });
+end
+
 local function initRow(row, Entry)
     if (not row.built) then
         row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD");
@@ -39,9 +93,18 @@ local function initRow(row, Entry)
             GameTooltip:SetOwner(self, "ANCHOR_RIGHT");
             GameTooltip:SetText(PP:raidLabel(E.raid), 1, 1, 1);
             GameTooltip:AddLine(("%s by %s"):format(date("%Y-%m-%d %H:%M:%S", E.at), E.by or "?"), 0.8, 0.8, 0.8);
+            if (E.batch and E.reason == "import") then
+                local Import = PP:import(E.batch);
+                GameTooltip:AddLine(Import and Import.undoneAt and "This import was undone." or "Click to undo this whole import.", 0, 1, 0);
+            end
             GameTooltip:Show();
         end);
         row:SetScript("OnLeave", GameTooltip_Hide);
+        row:SetScript("OnClick", function (self)
+            if (self.data.batch and self.data.reason == "import") then
+                confirmUndoImport(self.data.batch);
+            end
+        end);
 
         row.built = true;
     end

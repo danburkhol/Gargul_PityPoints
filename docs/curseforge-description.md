@@ -28,8 +28,8 @@ This add-on works alongside Gargul and **requires it**. It doesn't change Gargul
 - **Manager window** (`/pp`):
   - campaigns and sheets sidebar, with New campaign and Edit campaign;
   - search, sort, and +/− / reset of points;
-  - CSV export.
-- **Points log.** Every change is recorded with when, who, why and which softres sheet. It can be exported to CSV.
+  - CSV export, and CSV import in the same format (with a preview) to bring over points from a spreadsheet.
+- **Points log.** Every change is recorded with when, who, why and which softres sheet. It can be exported to CSV, and an import can be undone from it.
 - **Whispers:**
   - Players can whisper `!pp` to see their points.
   - Gargul's `!sr` reply gets a follow-up whisper with their points on each reserved item.

@@ -465,6 +465,55 @@ end
 
 --[[ POINTS VIEW ]]
 
+StaticPopupDialogs["GARGULPITYPOINTS_REMOVE_ROW"] = {
+    text = "%s",
+    button1 = "Remove",
+    button2 = CANCEL,
+    OnAccept = function (_, data) data.accept(); end,
+    timeout = 0,
+    whileDead = true,
+    hideOnEscape = true,
+    preferredIndex = 3,
+};
+
+--- Remove a points row: its points go to 0 (logged) and, if it's on the current sheet, that reserve is dropped from our copy
+local function confirmRemoveRow(data)
+    local sheetID = PP:currentSheetID(data.raid);
+    local Parts = {};
+    if (data.points > 0) then
+        tinsert(Parts, ("Its %d points are set to 0 (logged as a manual edit)."):format(data.points));
+    end
+    if (data.reserved) then
+        tinsert(Parts, ("The reserve is removed from sheet %s here. Gargul's soft reserves don't change, and syncing this sheet again brings it back if softres.it still has it."):format(sheetID));
+    end
+
+    local text = ("Remove |cffffd100%s|r: %s?\n\n%s"):format(data.name, data.itemName, table.concat(Parts, "\n\n"));
+    StaticPopup_Show("GARGULPITYPOINTS_REMOVE_ROW", text, nil, {
+        accept = function ()
+            PP:setPoints(data.raid, data.key, data.itemID, 0, "manual", sheetID, true);
+            if (data.reserved) then
+                PP:removeReserve(sheetID, data.key, data.itemID);
+            end
+            PP:notify();
+        end,
+    });
+end
+
+local function showPointMenu(row)
+    local data = row.data;
+
+    if (not (MenuUtil and MenuUtil.CreateContextMenu)) then
+        return confirmRemoveRow(data);
+    end
+
+    MenuUtil.CreateContextMenu(row, function (_, Root)
+        Root:CreateTitle(("%s: %s"):format(data.name, data.itemName));
+        Root:CreateButton("Show only this player", function () PP:setManagerSearch(data.name); end);
+        Root:CreateDivider();
+        Root:CreateButton("|cffff6060Remove...|r", function () confirmRemoveRow(data); end);
+    end);
+end
+
 local function initPointRow(row, data)
     if (not row.built) then
         row:SetHighlightTexture("Interface\\QuestFrame\\UI-QuestTitleHighlight", "ADD");
@@ -539,14 +588,19 @@ local function initPointRow(row, data)
         end);
         row.Reset:SetPoint("LEFT", row.Plus, "RIGHT", 2, 0);
 
-        row:SetScript("OnClick", function ()
-            PP:setManagerSearch(row.data.name);
+        row:RegisterForClicks("LeftButtonUp", "RightButtonUp");
+        row:SetScript("OnClick", function (self, mouseButton)
+            if (mouseButton == "RightButton") then
+                showPointMenu(self);
+            else
+                PP:setManagerSearch(row.data.name);
+            end
         end);
         row:SetScript("OnEnter", function (self)
             showTooltip(self, row.data.name,
                 row.data.reserved and "|cff00ff00On the raid's current softres sheet.|r"
                     or "|cff999999Not on the current sheet: no bonus, and it resets when the next sheet is synced.|r",
-                "Click: show only this player.");
+                "Click: show only this player. Right-click: remove.");
         end);
         row:SetScript("OnLeave", GameTooltip_Hide);
 
@@ -847,6 +901,7 @@ local function sheetHistoryTooltip(owner, id)
     GameTooltip:SetText("Sync history: " .. id, 1, 1, 1);
     for _, Sync in ipairs(Sheet.Syncs) do
         local what = Sync.first and ("first sync, %d reserves"):format(Sync.reserves or 0)
+            or Sync.by and ("removed by %s"):format(Sync.by)
             or ("+%d / -%d reserves"):format(#(Sync.Added or {}), #(Sync.Removed or {}));
         GameTooltip:AddDoubleLine(date("%Y-%m-%d %H:%M", Sync.at), what, 0.8, 0.8, 0.8, 1, 1, 1);
         for _, Change in ipairs(Sync.Added or {}) do
@@ -1255,6 +1310,17 @@ local function createManager()
             "Read the soft reserves imported in Gargul. A new softres id starts a new sheet in a campaign you pick (or create), and resets items that weren't reserved again if the campaign says so. A known id just updates the sheet's reserves.");
     end);
     Sync:SetScript("OnLeave", GameTooltip_Hide);
+
+    local ImportButton = CreateFrame("Button", nil, f, "UIPanelButtonTemplate");
+    ImportButton:SetSize(96, 22);
+    ImportButton:SetPoint("RIGHT", Sync, "LEFT", -4, 0);
+    ImportButton:SetText("Import CSV");
+    ImportButton:SetScript("OnClick", function () PP:showImport(); end);
+    ImportButton:SetScript("OnEnter", function (self)
+        showTooltip(self, "Import CSV",
+            "Paste points in the Export CSV format. Each row sets a player's points on an item in an existing campaign; you see a preview first, and the import can be undone from the Log.");
+    end);
+    ImportButton:SetScript("OnLeave", GameTooltip_Hide);
 
     -- Points panel
     local PointsPanel = CreateFrame("Frame", nil, Inset);

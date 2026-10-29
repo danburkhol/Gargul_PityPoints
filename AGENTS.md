@@ -4,7 +4,7 @@ A WoW Classic add-on that tracks soft-reserve "pity points" per team and raid, a
 
 - **Target client:** TBC Anniversary (`_anniversary_`, Interface 20506). The TOC also lists the other Classic interface numbers that Gargul supports.
 - **Requirements:** Part 1 of the original spec, summarised in `docs/Research.md`.
-- **Design (implemented in v0.2.0):** `docs/Design-RaidsAndWeeks.md` covers raids, softres sheets, attendance, Close week and the points log.
+- **Design (implemented in v0.2.0):** `docs/Design-RaidsAndWeeks.md` covers raids, softres sheets, attendance, Close week and the points log. `docs/Design-Import.md` covers the CSV import and its undo.
 - **Gargul integration:** read `docs/GargulIntegration.md` first. It lists events, data shapes, line refs, gotchas, the softres.it export fields and recipes for what's left.
 - **Blizzard UI reference:** `../ExtendedMacroUI/wow-ui-source/Interface/AddOns` (classic_era 1.15.9). Grep it before using any template or API, e.g. `Blizzard_Settings_Shared/Blizzard_ImplementationReadme.lua` for the Settings API.
 
@@ -16,12 +16,14 @@ A WoW Classic add-on that tracks soft-reserve "pity points" per team and raid, a
 | `Libs/` | Embedded LibStub, CallbackHandler-1.0, LibDataBroker-1.1, LibDBIcon-1.0 (copied unmodified from BigWigs' bundle). |
 | `Core.lua` | Namespace `PP` (addon vararg, also `_G.GargulPityPoints`), SavedVariables + schema migration, raids, the points + ledger API, rows/CSV, slash commands, boot. |
 | `Sheets.lua` | Softres sheets: sync (new vs known softres id), the active sheet, attendance snapshots (`ENCOUNTER_END` + timer), wins/rolls, Close week / reopen, adopt dialog. |
+| `Import.lua` | Points CSV import (the `PP:buildCSV` format): `planImport` (parse + preview, all or nothing), `applyImport`, `undoImport`. Design: `docs/Design-Import.md`. |
 | `Gargul.lua` | **The only file that touches Gargul.** `readSoftresSheet` (decodes `MetaData.importString`), `isReserved`, roll bonus, roll-window note, results announcement, award → win, the `!pp` whisper reply, and the `!sr` follow-up (post-hook on `GL.SoftRes.handleWhisperCommand`). |
 | `UI/Settings.lua` | Blizzard Settings panel (Esc > Options > AddOns > Gargul Pity Points). |
 | `UI/Campaign.lua` | Campaign editor (create, or edit an existing campaign's rules) and the picker shown when a new softres id is synced. |
-| `UI/Manager.lua` | Main window: raids/sheets sidebar; points view (search, sort, +/−/reset, export); sheet view (attended/bench checklist, Close week). |
+| `UI/Manager.lua` | Main window: raids/sheets sidebar; points view (search, sort, +/−/reset, export, right-click Remove); sheet view (attended/bench checklist, Close week). |
 | `UI/Log.lua` | Points log window (ledger), filter by raid or search, CSV export. |
 | `UI/Export.lua` | Generic CSV window: `PP:showExport(csv, count, what)`. |
+| `UI/Import.lua` | CSV import window (paste, Preview, Import), opened from the manager's top bar. Undo lives in `UI/Log.lua` (click an "Imported" entry). |
 | `UI/Broker.lua` | LibDataBroker data source (Titan Panel etc.) and the LibDBIcon minimap button. |
 
 ## Data model (`GargulPityPointsDB`, schema 3)
@@ -29,8 +31,10 @@ A WoW Classic add-on that tracks soft-reserve "pity points" per team and raid, a
 - `Raids[raidKey] = { team, Instances, label, Rules, Points[playerKey][itemID], currentSheet }`. The UI calls a Raid a **campaign**. `raidKey = strlower(team) .. ":" .. table.concat(instances, "+")`. `Raids.unassigned` holds pre-v2 points until a new sheet adopts them.
 - `Rules = { reserves, perWeek, cap, resetOnWin, resetNotReserved }` (defaults in `PP.RULE_DEFAULTS`). Read with `PP:rules(raidKey)`, write with `PP:setRules`. Schema 3 copied the old global settings into every Raid. `closeSummary.Rules` keeps the rules a Close week used.
 - Campaigns are created only by the user (`PP:ensureRaid` from `UI/Campaign.lua`). A new softres id goes through `PP:showCampaignPicker`; `PP:createSheet(Data, raidKey)` never creates a campaign. Match sheets to campaigns with `PP:sameInstances` (it compares display names, so slug aliases match).
-- `Sheets[softresID] = { raidKey, Instances, url, note, createdAt, updatedAt, lockedAt, firstSyncedAt, lastSyncedAt, Reserves[playerKey][itemID] = order, Classes, Syncs[], Seen[playerKey] = { first, last, snapshots, bosses }, Bosses[], Rolled, Wins, Bench, Override, closedAt, closedBy, closeSummary }`.
-- `Ledger[] = { at, raid, sheet, player, itemID, delta, after, reason, by }`. Reasons are in `PP.LEDGER_REASONS`.
+- `Sheets[softresID] = { raidKey, Instances, url, note, createdAt, updatedAt, lockedAt, firstSyncedAt, lastSyncedAt, Reserves[playerKey][itemID] = order, Classes, Syncs[] (a `by` field marks a reserve removed by hand with `PP:removeReserve`), Seen[playerKey] = { first, last, snapshots, bosses }, Bosses[], Rolled, Wins, Bench, Override, closedAt, closedBy, closeSummary }`.
+- `Ledger[] = { at, raid, sheet, player, itemID, delta, after, reason, by, batch }`. Reasons are in `PP.LEDGER_REASONS`. `batch` is set on `import` / `undo` entries only: the `Imports` id.
+- `Imports[id] = { at, by, rows, changes, Raids[raidKey] = changes, undoneAt, undoneBy }`, one per CSV import.
+- **Export = import:** the import reads exactly the `PP:buildCSV` columns. Changing the export header means changing `Import.lua` too.
 - `Settings.sharePoints` (global): roll bonuses sum a player's points on the item across every campaign, and win / not-reserved resets apply in every campaign. Read points for a roll with `PP:rollPoints`, and the campaigns to reset with `PP:pointCampaigns`.
 - `Teams[]`, `lastTeam`, `lastRules` (prefills a new campaign), `ItemNames[itemID]` (name cache), `Classes[playerKey]` (class cache from every synced sheet; use `PP:playerClass`), `UI.Collapsed[raidKey]` (sidebar state), `Settings` (see `PP.DEFAULTS`).
 - Sheet dates: `createdAt`, `raidStartsAt` and `lockedAt` come from softres.it; `firstSyncedAt` is ours. `PP:sheetDate(id)` picks one per `Settings.sheetDate`.

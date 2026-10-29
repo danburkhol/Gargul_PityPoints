@@ -15,10 +15,12 @@ Libs\LibDBIcon-1.0\LibDBIcon-1.0.lua
 
 Core.lua
 Sheets.lua
+Import.lua
 Gargul.lua
 UI\Settings.lua
 UI\Campaign.lua
 UI\Manager.lua
 UI\Log.lua
 UI\Export.lua
+UI\Import.lua
 UI\Broker.lua

@@ -20,9 +20,10 @@ Built for WoW Classic, TBC Anniversary. Requires Gargul.
 
 - `/pp` opens the manager.
   - **Sidebar:** your campaigns, each with its softres sheets underneath, and **New campaign**. Right-click an entry to edit the campaign, collapse it, open its log, close or reopen the week, or delete it.
-  - **Campaign view:** search, sort, +/− and reset points, export to CSV, and **Edit campaign** for its rules.
+  - **Campaign view:** search, sort, +/− and reset points, export to CSV, and **Edit campaign** for its rules. Right-click a row to **Remove** it: its points go to 0, and if it's a reserve on the current sheet, that reserve is dropped from the add-on's copy of the sheet.
   - **Sheet view:** attendance and bench checklist, with a preview of the points each player will gain, and **Close week**.
-- **Points log:** every change is recorded with when, who, why and which softres sheet. It can be exported to CSV.
+  - **Import CSV:** paste points in the export format to set them in existing campaigns, for example to bring over a spreadsheet. You see a preview first.
+- **Points log:** every change is recorded with when, who, why and which softres sheet. It can be exported to CSV. Click an imported entry to undo that whole import.
 - **Whispers:**
   - Players can whisper you `!pp` (or `!pitypoints`) to get their points in every raid.
   - After Gargul answers a `!sr` whisper, the add-on sends a second whisper with the player's points on each reserved item.

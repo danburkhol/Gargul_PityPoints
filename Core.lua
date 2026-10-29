@@ -79,7 +79,7 @@ PP.RAID_CHOICES = {
 
 PP.LEDGER_REASONS = {
     week = "Close week", win = "Won item", manual = "Manual edit", reset = "Not reserved again",
-    reopen = "Week reopened", migrate = "Moved from before raid tracking",
+    reopen = "Week reopened", migrate = "Moved from before raid tracking", import = "Imported", undo = "Import undone",
 };
 
 PP.callbacks = LibStub("CallbackHandler-1.0"):New(PP);
@@ -341,7 +341,7 @@ end
 
 --[[ POINTS + LEDGER ]]
 
-function PP:log(raidKey, sheetID, playerKey, itemID, delta, after, reason)
+function PP:log(raidKey, sheetID, playerKey, itemID, delta, after, reason, batch)
     tinsert(DB.Ledger, {
         at = time(),
         raid = raidKey,
@@ -351,6 +351,7 @@ function PP:log(raidKey, sheetID, playerKey, itemID, delta, after, reason)
         delta = delta,
         after = after,
         reason = reason,
+        batch = batch,
         by = self:me(),
     });
 end
@@ -386,7 +387,8 @@ function PP:rollPoints(raidKey, playerName, itemID)
 end
 
 --- The only writer of points. Logs the change; quiet = don't notify the UI (batch callers notify once).
-function PP:setPoints(raidKey, playerName, itemID, points, reason, sheetID, quiet)
+--- batch tags the ledger entry with an import id (Import.lua).
+function PP:setPoints(raidKey, playerName, itemID, points, reason, sheetID, quiet, batch)
     local Raid = self:raid(raidKey);
     if (not Raid) then
         return;
@@ -408,7 +410,7 @@ function PP:setPoints(raidKey, playerName, itemID, points, reason, sheetID, quie
     end
 
     self:itemName(itemID); -- Warm the name cache for search
-    self:log(raidKey, sheetID, key, itemID, points - before, points, reason or "manual");
+    self:log(raidKey, sheetID, key, itemID, points - before, points, reason or "manual", batch);
 
     if (not quiet) then
         self:notify();
@@ -709,6 +711,7 @@ local function initDB()
     DB.Raids = DB.Raids or {};
     DB.Sheets = DB.Sheets or {};
     DB.Ledger = DB.Ledger or {};
+    DB.Imports = DB.Imports or {};
     DB.Teams = DB.Teams or {};
     DB.ItemNames = DB.ItemNames or {};
     DB.UI = DB.UI or {};
