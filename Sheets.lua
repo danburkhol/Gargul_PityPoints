@@ -7,10 +7,6 @@ local _, PP = ...;
 
 local DB;
 
-local function dialogEditBox(dialog)
-    return dialog.GetEditBox and dialog:GetEditBox() or dialog.editBox;
-end
-
 local function countPairs(Reserves)
     local n = 0;
     for _, Items in pairs(Reserves) do
@@ -154,21 +150,22 @@ end
 
 --[[ SYNC ]]
 
-local function overLimit(Reserves)
+local function overLimit(Reserves, raidKey)
+    local limit = PP:rules(raidKey).reserves;
     local Names = {};
     for key, Items in pairs(Reserves) do
         local n = 0;
         for _ in pairs(Items) do
             n = n + 1;
         end
-        if (n > DB.Settings.reservesPerWeek) then
+        if (n > limit) then
             tinsert(Names, PP:displayName(key));
         end
     end
     table.sort(Names);
 
     if (#Names > 0) then
-        PP:print(("Reserved more than %d items: %s"):format(DB.Settings.reservesPerWeek, table.concat(Names, ", ")));
+        PP:print(("Reserved more than %d items: %s"):format(limit, table.concat(Names, ", ")));
     end
 end
 
@@ -198,12 +195,14 @@ function PP:resetNotReservedAgain(Sheet)
     return reset;
 end
 
-function PP:createSheet(Data, team)
-    team = self:addTeam(team ~= "" and team or "Main");
-    DB.lastTeam = team;
+--- Start a sheet record for a new softres ID under an existing campaign
+function PP:createSheet(Data, raidKey)
+    local Raid = self:raid(raidKey);
+    if (not Raid) then
+        return;
+    end
 
     local Instances = Data.Instances or fallbackInstances();
-    local raidKey, Raid = self:ensureRaid(team, Instances);
     local now = time();
 
     local Sheet = {
@@ -234,11 +233,14 @@ function PP:createSheet(Data, team)
     self:rememberClasses(Data.Classes);
 
     local function finish()
-        local reset = self:resetNotReservedAgain(Sheet);
-        self:print(("New sheet %s for %s: %d reserves, %d items reset (not reserved again)."):format(
-            Data.id, Raid.label, Sheet.Syncs[1].reserves, reset
-        ));
-        overLimit(Sheet.Reserves);
+        if (self:rules(raidKey).resetNotReserved) then
+            self:print(("New sheet %s for %s: %d reserves, %d items reset (not reserved again)."):format(
+                Data.id, Raid.label, Sheet.Syncs[1].reserves, self:resetNotReservedAgain(Sheet)
+            ));
+        else
+            self:print(("New sheet %s for %s: %d reserves."):format(Data.id, Raid.label, Sheet.Syncs[1].reserves));
+        end
+        overLimit(Sheet.Reserves, raidKey);
         self:notify();
     end
 
@@ -297,7 +299,7 @@ function PP:updateSheet(Sheet, Data)
     });
 
     self:print(("Sheet %s updated: %d reserves added, %d removed. Points unchanged."):format(Sheet.id, #Added, #Removed));
-    overLimit(Sheet.Reserves);
+    overLimit(Sheet.Reserves, Sheet.raidKey);
     self:notify();
 end
 
@@ -313,12 +315,11 @@ function PP:syncFromGargul()
         return self:updateSheet(Sheet, Data);
     end
 
-    local Known = #DB.Teams > 0 and ("\n\nTeams so far: " .. table.concat(DB.Teams, ", ")) or "";
-    StaticPopup_Show("GARGULPITYPOINTS_TEAM", Data.id, Known, {
-        accept = function (team)
-            PP:createSheet(Data, team);
-        end,
-    });
+    -- New softres ID: it has to go into a campaign, picked (or created) now
+    Data.Instances = Data.Instances or fallbackInstances();
+    self:showCampaignPicker(Data, function (raidKey)
+        PP:createSheet(Data, raidKey);
+    end);
 end
 
 --[[ ROLLS, WINS AND ATTENDANCE ]]
@@ -330,12 +331,12 @@ function PP:recordRoll(playerName)
     end
 end
 
---- Returns the points the winner had on the item before any reset
+--- Returns the points the winner had on the item, and whether the campaign's rules reset them
 function PP:recordWin(playerName, itemID)
     local id = self:activeSheetID();
     local Sheet = self:sheet(id);
     if (not Sheet) then
-        return 0;
+        return 0, false;
     end
 
     local key = self:key(playerName);
@@ -344,13 +345,14 @@ function PP:recordWin(playerName, itemID)
     Sheet.Wins[key][itemID] = true;
 
     local had = self:getPoints(Sheet.raidKey, key, itemID);
-    if (DB.Settings.resetOnWin and had > 0) then
+    local reset = self:rules(Sheet.raidKey).resetOnWin and had > 0;
+    if (reset) then
         self:setPoints(Sheet.raidKey, key, itemID, 0, "win", id);
     else
         self:notify();
     end
 
-    return had;
+    return had, reset;
 end
 
 --- Record everyone online in the raid group against the active sheet. reason: boss name, "timer" or "manual".
@@ -446,7 +448,9 @@ function PP:closeWeekPlan(id)
         return Plan;
     end
 
-    local step, cap = DB.Settings.pointsPerWeek, DB.Settings.cap;
+    local Rules = self:rules(Sheet.raidKey);
+    local step, cap = Rules.perWeek, Rules.cap;
+    Plan.Rules = Rules;
 
     for key, Items in pairs(Sheet.Reserves) do
         Plan.players = Plan.players + 1;
@@ -492,7 +496,10 @@ function PP:closeWeek(id)
 
     Sheet.closedAt = time();
     Sheet.closedBy = self:me();
-    Sheet.closeSummary = { attended = Plan.attended, bench = Plan.bench, absent = Plan.absent, awards = #Plan.Awards, };
+    Sheet.closeSummary = {
+        attended = Plan.attended, bench = Plan.bench, absent = Plan.absent, awards = #Plan.Awards,
+        Rules = CopyTable(Plan.Rules), -- Rules can change later; keep what this close used
+    };
 
     self:print(("Closed week %s for %s: %d items gained points (%d attended, %d bench, %d absent)."):format(
         id, self:raidLabel(Sheet.raidKey), #Plan.Awards, Plan.attended, Plan.bench, Plan.absent
@@ -545,34 +552,6 @@ function PP:weekGains(id)
 end
 
 --[[ DIALOGS ]]
-
-StaticPopupDialogs["GARGULPITYPOINTS_TEAM"] = {
-    text = "New softres sheet |cffffd100%s|r.\n\nWhich team is it for? Points are tracked per team and raid.%s",
-    button1 = OKAY,
-    button2 = CANCEL,
-    hasEditBox = 1,
-    maxLetters = 32,
-    OnShow = function (dialog)
-        local EditBox = dialogEditBox(dialog);
-        EditBox:SetText(DB.lastTeam or "");
-        EditBox:HighlightText();
-        EditBox:SetFocus();
-    end,
-    OnAccept = function (dialog, data)
-        data.accept(strtrim(dialogEditBox(dialog):GetText()));
-    end,
-    EditBoxOnEnterPressed = function (editBox, data)
-        data.accept(strtrim(editBox:GetText()));
-        editBox:GetParent():Hide();
-    end,
-    EditBoxOnEscapePressed = function (editBox)
-        editBox:GetParent():Hide();
-    end,
-    timeout = 0,
-    whileDead = true,
-    hideOnEscape = true,
-    preferredIndex = 3,
-};
 
 StaticPopupDialogs["GARGULPITYPOINTS_ADOPT"] = {
     text = "You have points from before raid tracking.\n\nMove them into |cffffd100%s|r?",

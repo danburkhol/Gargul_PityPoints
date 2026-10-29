@@ -273,8 +273,8 @@ function PP:onItemAwarded(_, AwardEntry)
         return;
     end
 
-    local had = self:recordWin(AwardEntry.awardedTo, AwardEntry.itemID);
-    if (self.db.Settings.resetOnWin and had > 0) then
+    local had, reset = self:recordWin(AwardEntry.awardedTo, AwardEntry.itemID);
+    if (reset) then
         self:print(("%s won %s, pity points reset (had %d)."):format(
             GL:disambiguateName(AwardEntry.awardedTo), AwardEntry.itemLink or AwardEntry.itemID, had
         ));

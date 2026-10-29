@@ -6,22 +6,24 @@ This add-on works alongside Gargul and **requires it**. It doesn't change Gargul
 
 ## Features
 
-- **Points per team and raid.** Points are tracked per player and per item, separately for each team and raid, e.g. *Team Gard · Black Temple*.
+- **Campaigns.** Each team and raid gets its own rules, e.g. *Gard · Black Temple: 2 SRs, +10 per week, no cap* and *Gard · Sunwell Plateau: 3 SRs, +5 per week, cap 40*.
+  - Set per campaign: SRs per week, points per week, points cap, reset on win, and reset items not reserved again.
+  - Points are tracked per player and per item within each campaign.
 - **softres.it sync.**
   - Importing a sheet in Gargul syncs it automatically.
-  - A new sheet starts a new week for that team and raid.
-  - Items that weren't reserved again lose their points.
+  - A new sheet asks which campaign it's for (the matching one is preselected), or lets you create one, and starts a new week there.
+  - Items that weren't reserved again lose their points, if the campaign says so.
 - **Attendance tracking.**
   - The raid roster is noted on every boss kill and on a timer.
   - Tick *Bench* for players who were ready to go.
 - **Close week.**
-  - Adds points (10 by default) to each reserved item of everyone who attended or was benched, except items they won.
+  - Adds the campaign's points per week (up to its cap) to each reserved item of everyone who attended or was benched, except items they won.
   - A preview shows exactly what each player gains, and you can reopen a week to undo it.
 - **Bonus on rolls.** Gargul ranks rolls by the total of roll plus points.
 - **Results.** The winner is announced in chat: *"[Player] wins with a roll of X and points of Y for a total of Z."*, followed by the other rolls.
-- **Reset on win.** Winning an item resets the winner's points on it.
+- **Reset on win.** Winning an item resets the winner's points on it, in campaigns that have it on.
 - **Manager window** (`/pp`):
-  - raids and sheets sidebar;
+  - campaigns and sheets sidebar, with New campaign and Edit campaign;
   - search, sort, and +/− / reset of points;
   - CSV export.
 - **Points log.** Every change is recorded with when, who, why and which softres sheet. It can be exported to CSV.
@@ -30,9 +32,8 @@ This add-on works alongside Gargul and **requires it**. It doesn't change Gargul
   - Gargul's `!sr` reply gets a follow-up whisper with their points on each reserved item.
 - **Launcher.** An optional minimap button, plus a LibDataBroker launcher for Titan Panel and other broker displays.
 - **Settings** in Esc > Options > AddOns, covering:
-  - points per week, cap and reserves per week;
-  - reset on win;
-  - announcement channel and whisper replies.
+  - attendance recording;
+  - the Gargul hooks, announcement channel and whisper replies.
 
 ## Commands
 

@@ -5,11 +5,6 @@
 
 local _, PP = ...;
 
-local function formatCap(value)
-    value = math.floor(value + 0.5);
-    return value == 0 and "Off" or tostring(value);
-end
-
 local function formatWhole(value)
     return tostring(math.floor(value + 0.5));
 end
@@ -70,17 +65,9 @@ function PP:initSettings()
             end
             PP:openManager();
         end,
-        "Browse, search and edit points per player and item. Also: /pp",
+        "Browse, search and edit points per player and item. SRs per week, points per week, the cap and resets are set per campaign there (New campaign / Edit campaign). Also: /pp",
         true
     ));
-
-    header("Points");
-    slider("pointsPerWeek", "Points per week", 1, 100, 1,
-        "Points added at Close week on each reserved item of players who attended or were benched and didn't win it.");
-    slider("cap", "Points cap", 0, 500, 5,
-        "Maximum points a player can have on one item. Off = no cap.", formatCap);
-    slider("reservesPerWeek", "Reserves per week", 1, 10, 1,
-        "How many items each player may soft reserve. Players over the limit are listed when syncing.");
 
     header("Attendance");
     checkbox("recordAttendance", "Record raid attendance",
@@ -99,16 +86,14 @@ function PP:initSettings()
     end
 
     feature("autoSync", "Sync automatically on import",
-        "When a softres.it sheet is imported in Gargul, sync it straight away. A new softres id starts a new sheet (you'll be asked for the team); re-importing the same sheet only records what changed.");
+        "When a softres.it sheet is imported in Gargul, sync it straight away. A new softres id starts a new sheet (you'll pick or create its campaign); re-importing the same sheet only records what changed.");
     feature("rollBonus", "Add points to rolls",
         "When a player rolls on an item they soft reserved, add their pity points to the roll itself, so Gargul ranks the roll window by the total.");
     feature("rollNote", "Show points in the roll window",
         "Add \"PP roll+points\" to the Note column of Gargul's roll window for rolls that got a bonus.");
 
-    local trackWins = feature("trackWins", "Record wins from Gargul awards",
-        "When Gargul awards an item, record the win on the active sheet. Close week doesn't add points to items a player won.");
-    dependsOn(checkbox("resetOnWin", "Reset points on win",
-        "When Gargul awards an item, reset the winner's points on that item to zero."), trackWins, "gargul", "trackWins");
+    feature("trackWins", "Record wins from Gargul awards",
+        "When Gargul awards an item, record the win on the active sheet. Close week doesn't add points to items a player won, and campaigns with \"Reset points on win\" reset the winner's points.");
 
     local announce = feature("announce", "Announce results",
         "When a roll-off you started ends, post the winner with their roll, points and total, followed by the other rolls.");
@@ -128,7 +113,6 @@ function PP:initSettings()
 
     -- Options only re-check their direct parent, so pass master switch changes down to the grandchildren
     gargul:GetSetting():SetValueChangedCallback(function ()
-        trackWins:GetSetting():NotifyUpdate();
         announce:GetSetting():NotifyUpdate();
     end);
 

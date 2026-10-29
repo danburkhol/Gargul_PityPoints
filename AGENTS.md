@@ -15,20 +15,23 @@ A WoW Classic add-on that tracks soft-reserve "pity points" per team and raid, a
 | `Gargul_PityPoints.toc` | Load order. Libs first, then `Core.lua`, `Sheets.lua`, `Gargul.lua`, `UI/*`. |
 | `Libs/` | Embedded LibStub, CallbackHandler-1.0, LibDataBroker-1.1, LibDBIcon-1.0 (copied unmodified from BigWigs' bundle). |
 | `Core.lua` | Namespace `PP` (addon vararg, also `_G.GargulPityPoints`), SavedVariables + schema migration, raids, the points + ledger API, rows/CSV, slash commands, boot. |
-| `Sheets.lua` | Softres sheets: sync (new vs known softres id), the active sheet, attendance snapshots (`ENCOUNTER_END` + timer), wins/rolls, Close week / reopen, team and adopt dialogs. |
+| `Sheets.lua` | Softres sheets: sync (new vs known softres id), the active sheet, attendance snapshots (`ENCOUNTER_END` + timer), wins/rolls, Close week / reopen, adopt dialog. |
 | `Gargul.lua` | **The only file that touches Gargul.** `readSoftresSheet` (decodes `MetaData.importString`), `isReserved`, roll bonus, roll-window note, results announcement, award → win, the `!pp` whisper reply, and the `!sr` follow-up (post-hook on `GL.SoftRes.handleWhisperCommand`). |
 | `UI/Settings.lua` | Blizzard Settings panel (Esc > Options > AddOns > Gargul Pity Points). |
+| `UI/Campaign.lua` | Campaign editor (create, or edit an existing campaign's rules) and the picker shown when a new softres id is synced. |
 | `UI/Manager.lua` | Main window: raids/sheets sidebar; points view (search, sort, +/−/reset, export); sheet view (attended/bench checklist, Close week). |
 | `UI/Log.lua` | Points log window (ledger), filter by raid or search, CSV export. |
 | `UI/Export.lua` | Generic CSV window: `PP:showExport(csv, count, what)`. |
 | `UI/Broker.lua` | LibDataBroker data source (Titan Panel etc.) and the LibDBIcon minimap button. |
 
-## Data model (`GargulPityPointsDB`, schema 2)
+## Data model (`GargulPityPointsDB`, schema 3)
 
-- `Raids[raidKey] = { team, Instances, label, Points[playerKey][itemID], currentSheet }`. `raidKey = strlower(team) .. ":" .. table.concat(instances, "+")`. `Raids.unassigned` holds pre-v2 points until a new sheet adopts them.
+- `Raids[raidKey] = { team, Instances, label, Rules, Points[playerKey][itemID], currentSheet }`. The UI calls a Raid a **campaign**. `raidKey = strlower(team) .. ":" .. table.concat(instances, "+")`. `Raids.unassigned` holds pre-v2 points until a new sheet adopts them.
+- `Rules = { reserves, perWeek, cap, resetOnWin, resetNotReserved }` (defaults in `PP.RULE_DEFAULTS`). Read with `PP:rules(raidKey)`, write with `PP:setRules`. Schema 3 copied the old global settings into every Raid. `closeSummary.Rules` keeps the rules a Close week used.
+- Campaigns are created only by the user (`PP:ensureRaid` from `UI/Campaign.lua`). A new softres id goes through `PP:showCampaignPicker`; `PP:createSheet(Data, raidKey)` never creates a campaign. Match sheets to campaigns with `PP:sameInstances` (it compares display names, so slug aliases match).
 - `Sheets[softresID] = { raidKey, Instances, url, note, createdAt, updatedAt, lockedAt, firstSyncedAt, lastSyncedAt, Reserves[playerKey][itemID] = order, Classes, Syncs[], Seen[playerKey] = { first, last, snapshots, bosses }, Bosses[], Rolled, Wins, Bench, Override, closedAt, closedBy, closeSummary }`.
 - `Ledger[] = { at, raid, sheet, player, itemID, delta, after, reason, by }`. Reasons are in `PP.LEDGER_REASONS`.
-- `Teams[]`, `lastTeam`, `ItemNames[itemID]` (name cache), `Classes[playerKey]` (class cache from every synced sheet; use `PP:playerClass`), `UI.Collapsed[raidKey]` (sidebar state), `Settings` (see `PP.DEFAULTS`).
+- `Teams[]`, `lastTeam`, `lastRules` (prefills a new campaign), `ItemNames[itemID]` (name cache), `Classes[playerKey]` (class cache from every synced sheet; use `PP:playerClass`), `UI.Collapsed[raidKey]` (sidebar state), `Settings` (see `PP.DEFAULTS`).
 - Sheet dates: `createdAt`, `raidStartsAt` and `lockedAt` come from softres.it; `firstSyncedAt` is ours. `PP:sheetDate(id)` picks one per `Settings.sheetDate`.
 - `playerKey = strlower(GL:disambiguateName(name))`, which matches Gargul's softres keys.
 

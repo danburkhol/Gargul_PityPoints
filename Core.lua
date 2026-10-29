@@ -1,7 +1,7 @@
 --[[
-    Gargul Pity Points: namespace, saved data (schema 2), points + ledger API, rows / CSV, slash commands and boot.
+    Gargul Pity Points: namespace, saved data (schema 3), points + ledger API, rows / CSV, slash commands and boot.
 
-    Points live per raid (team + instance). Every change goes through PP:setPoints, which writes a ledger entry
+    Points live per campaign (team + instance, Raids[raidKey]), each with its own Rules. Every change goes through PP:setPoints, which writes a ledger entry
     and fires PP.callbacks "POINTS_CHANGED". Sheets, attendance and Close week live in Sheets.lua.
     Design: docs/Design-RaidsAndWeeks.md. Gargul hooks: Gargul.lua.
 ]]
@@ -14,11 +14,16 @@ PP.title = "Gargul Pity Points";
 PP.icon = "Interface\\Icons\\INV_Misc_Coin_01";
 PP.UNASSIGNED = "unassigned";
 
-PP.DEFAULTS = {
-    reservesPerWeek = 2,
-    pointsPerWeek = 10,
+-- Per campaign (Raid.Rules), edited in UI/Campaign.lua
+PP.RULE_DEFAULTS = {
+    reserves = 2,
+    perWeek = 10,
     cap = 0, -- 0 = no cap
     resetOnWin = true,
+    resetNotReserved = true,
+};
+
+PP.DEFAULTS = {
     -- Gargul integration: a master switch, then one per hook (see Gargul.lua)
     gargul = true,
     autoSync = true,
@@ -61,6 +66,13 @@ PP.INSTANCE_NAMES = {
     sunwell = "Sunwell Plateau", moltencore = "Molten Core", onyxia = "Onyxia's Lair", blackwinglair = "Blackwing Lair",
     zulgurub = "Zul'Gurub", aq20 = "Ruins of Ahn'Qiraj", aq40 = "Temple of Ahn'Qiraj", naxxramas = "Naxxramas",
     unknown = "Unknown raid",
+};
+
+-- Raids offered when creating a campaign, in display order. Matching against sheets goes by name, so aliases are fine.
+PP.RAID_CHOICES = {
+    { "The Burning Crusade", { "karazhan", "gruulslair", "magtheridonslair", "serpentshrinecavern", "tempestkeep",
+        "hyjal", "blacktemple", "zulaman", "sunwellplateau", }, },
+    { "Classic", { "moltencore", "onyxia", "blackwinglair", "zulgurub", "aq20", "aq40", "naxxramas", }, },
 };
 
 PP.LEDGER_REASONS = {
@@ -180,7 +192,8 @@ function PP:raidKey(team, Instances)
     return strlower(strtrim(team)) .. ":" .. table.concat(Instances, "+");
 end
 
-function PP:ensureRaid(team, Instances)
+--- Create a campaign (team + raid) with its rules, or return the existing one
+function PP:ensureRaid(team, Instances, Rules)
     local key = self:raidKey(team, Instances);
 
     if (not DB.Raids[key]) then
@@ -196,9 +209,89 @@ function PP:ensureRaid(team, Instances)
             Points = {},
             createdAt = time(),
         };
+        self:setRules(key, Rules or DB.lastRules);
     end
 
     return key, DB.Raids[key];
+end
+
+local function fillRules(Rules)
+    for k, v in pairs(PP.RULE_DEFAULTS) do
+        if (Rules[k] == nil) then
+            Rules[k] = v;
+        end
+    end
+    return Rules;
+end
+
+function PP:rules(raidKey)
+    local Raid = self:raid(raidKey);
+    return Raid and Raid.Rules or self.RULE_DEFAULTS;
+end
+
+--- Store a campaign's rules. They apply from the next sync / Close week; past points are left alone.
+function PP:setRules(raidKey, Rules)
+    local Raid = self:raid(raidKey);
+    if (not Raid) then
+        return;
+    end
+
+    local function whole(value, minimum)
+        return math.max(minimum, math.floor(tonumber(value) or minimum));
+    end
+
+    Rules = Rules or {};
+    Raid.Rules = fillRules({
+        reserves = Rules.reserves and whole(Rules.reserves, 1),
+        perWeek = Rules.perWeek and whole(Rules.perWeek, 1),
+        cap = Rules.cap and whole(Rules.cap, 0),
+        resetOnWin = Rules.resetOnWin,
+        resetNotReserved = Rules.resetNotReserved,
+    });
+    DB.lastRules = CopyTable(Raid.Rules);
+    self:notify();
+end
+
+function PP:rulesText(raidKey)
+    local R = self:rules(raidKey);
+    return ("%d SR%s · +%d/week · %s"):format(
+        R.reserves, R.reserves == 1 and "" or "s", R.perWeek, R.cap > 0 and ("cap " .. R.cap) or "no cap"
+    );
+end
+
+-- Instance lists compared by display name, so softres aliases ("hyjal" / "hyjalsummit") match
+local function instanceSignature(Instances)
+    local Names = {};
+    for _, slug in ipairs(Instances or {}) do
+        tinsert(Names, strlower(PP:instanceName(slug)));
+    end
+    table.sort(Names);
+    return table.concat(Names, "+");
+end
+
+function PP:sameInstances(A, B)
+    return instanceSignature(A) == instanceSignature(B);
+end
+
+--- The campaign for this team and raid, if one exists
+function PP:findCampaign(team, Instances)
+    team = strlower(strtrim(team or ""));
+    for key, Raid in pairs(DB.Raids) do
+        if (key ~= self.UNASSIGNED and strlower(Raid.team) == team and self:sameInstances(Raid.Instances, Instances)) then
+            return key;
+        end
+    end
+end
+
+--- Campaign keys (unassigned excluded), sorted by label: those for these instances first, then the rest
+function PP:campaignKeys(Instances)
+    local Matching, Other = {}, {};
+    for _, key in ipairs(self:raidKeys()) do
+        if (key ~= self.UNASSIGNED) then
+            tinsert(Instances and self:sameInstances(DB.Raids[key].Instances, Instances) and Matching or Other, key);
+        end
+    end
+    return Matching, Other;
 end
 
 function PP:raid(raidKey)
@@ -550,7 +643,28 @@ local function migrate()
         DB.Points, DB.LastReserves, DB.WonThisCycle, DB.lastSoftresID = nil, nil, nil, nil;
     end
 
-    DB.schema = 2;
+    -- Schema 2 -> 3: the global point settings become each campaign's rules, so nothing changes on upgrade
+    if ((DB.schema or 0) < 3) then
+        local S = DB.Settings;
+        local Old = fillRules({
+            reserves = tonumber(S.reservesPerWeek),
+            perWeek = tonumber(S.pointsPerWeek),
+            cap = tonumber(S.cap), -- The PoC stored "no cap" as false
+            resetOnWin = S.resetOnWin,
+        });
+
+        for _, Raid in pairs(DB.Raids) do
+            Raid.Rules = Raid.Rules or CopyTable(Old);
+        end
+        DB.lastRules = DB.lastRules or Old;
+        S.reservesPerWeek, S.pointsPerWeek, S.cap, S.resetOnWin = nil, nil, nil, nil;
+    end
+
+    DB.schema = 3;
+
+    for _, Raid in pairs(DB.Raids) do
+        Raid.Rules = fillRules(Raid.Rules or {});
+    end
 end
 
 local function initDB()
@@ -563,11 +677,6 @@ local function initDB()
         if (DB.Settings[k] == nil) then
             DB.Settings[k] = type(v) == "table" and CopyTable(v) or v;
         end
-    end
-
-    -- PoC stored "no cap" as false
-    if (type(DB.Settings.cap) ~= "number") then
-        DB.Settings.cap = 0;
     end
 
     DB.Raids = DB.Raids or {};

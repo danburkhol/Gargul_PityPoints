@@ -17,6 +17,7 @@ Core.lua
 Sheets.lua
 Gargul.lua
 UI\Settings.lua
+UI\Campaign.lua
 UI\Manager.lua
 UI\Log.lua
 UI\Export.lua

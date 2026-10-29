@@ -1,7 +1,7 @@
 --[[
     Pity Point manager window (/pp).
-      Sidebar: raids (team · instance) with their softres sheets underneath.
-      Raid selected:  points list with search, +/- and reset.
+      Sidebar: campaigns (team · instance) with their softres sheets underneath, and New campaign.
+      Campaign selected: points list with search, +/- and reset.
       Sheet selected: attendance checklist (attended / bench) and Close week.
 ]]
 
@@ -66,8 +66,8 @@ local function showTooltip(owner, title, ...)
     GameTooltip:Show();
 end
 
-local function step()
-    return IsShiftKeyDown() and 1 or PP.db.Settings.pointsPerWeek;
+local function step(raidKey)
+    return IsShiftKeyDown() and 1 or PP:rules(raidKey).perWeek;
 end
 
 local function selected()
@@ -305,7 +305,7 @@ local function confirmDelete(kind, id)
 
     if (kind == "raid") then
         local Raid = PP:raid(id);
-        text = ("Delete |cffffd100%s|r?\n\nThis removes its points and its %d softres sheets. The points log keeps its history."):format(
+        text = ("Delete campaign |cffffd100%s|r?\n\nThis removes its rules, points and its %d softres sheets. The points log keeps its history."):format(
             Raid.label, #PP:sheetIDs(id)
         );
         accept = function () PP:deleteRaid(id); end;
@@ -332,6 +332,9 @@ local function showSidebarMenu(row)
         Root:CreateTitle(data.label);
 
         if (data.kind == "raid") then
+            if (data.id ~= PP.UNASSIGNED) then
+                Root:CreateButton("Edit campaign...", function () PP:showCampaignEditor({ raidKey = data.id, }); end);
+            end
             Root:CreateButton(PP.db.UI.Collapsed[data.id] and "Expand" or "Collapse", function () toggleCollapsed(data.id); end);
             Root:CreateButton("Points log", function () PP:showLog(data.id); end);
         else
@@ -424,8 +427,9 @@ local function sidebarData()
             kind = "raid", id = raidKey, label = Raid.label,
             sub = collapsed and ("|cff999999%d sheets|r"):format(#SheetIDs) or (withPoints > 0 and tostring(withPoints) or ""),
             tooltip = {
+                raidKey ~= PP.UNASSIGNED and ("|cffffd100%s|r"):format(PP:rulesText(raidKey)) or "Points from before raid tracking.",
                 ("%d player/item entries with points, %d softres sheets."):format(withPoints, #SheetIDs),
-                "Click: view and edit points. Right-click: collapse, log, delete.",
+                "Click: view and edit points. Right-click: edit, collapse, log, delete.",
             },
         });
 
@@ -515,16 +519,16 @@ local function initPointRow(row, data)
         end
 
         row.Minus = button("-", 22, function ()
-            PP:adjustPoints(row.data.raid, row.data.key, row.data.itemID, -step());
+            PP:adjustPoints(row.data.raid, row.data.key, row.data.itemID, -step(row.data.raid));
         end, function (self)
-            showTooltip(self, ("Remove %d points"):format(PP.db.Settings.pointsPerWeek), "Shift-click: 1 point");
+            showTooltip(self, ("Remove %d points"):format(PP:rules(row.data.raid).perWeek), "Shift-click: 1 point");
         end);
         row.Minus:SetPoint("LEFT", x - 6, 0);
 
         row.Plus = button("+", 22, function ()
-            PP:adjustPoints(row.data.raid, row.data.key, row.data.itemID, step());
+            PP:adjustPoints(row.data.raid, row.data.key, row.data.itemID, step(row.data.raid));
         end, function (self)
-            showTooltip(self, ("Add %d points"):format(PP.db.Settings.pointsPerWeek), "Shift-click: 1 point");
+            showTooltip(self, ("Add %d points"):format(PP:rules(row.data.raid).perWeek), "Shift-click: 1 point");
         end);
         row.Plus:SetPoint("LEFT", row.Minus, "RIGHT", 2, 0);
 
@@ -580,7 +584,7 @@ local function refreshPoints(raidKey)
     updateArrows(Panel.Headers, State.Sort.points);
     Manager.Empty:SetShown(#Shown == 0);
     Manager.Empty:SetText(#All == 0
-        and "No points or reserves in this raid yet.\n\nSync a softres sheet for it, or select a sheet in the sidebar."
+        and "No points or reserves in this campaign yet.\n\nSync a softres sheet into it, or select a sheet in the sidebar."
         or "Nothing matches the search.");
 
     local currentID = PP:currentSheetID(raidKey);
@@ -810,7 +814,7 @@ local function fillInfo(Info, id, Sheet)
     end
 
     local Values = {
-        { "Raid", PP:raidLabel(Sheet.raidKey), },
+        { "Campaign", PP:raidLabel(Sheet.raidKey), },
         { "Softres ID", id, },
         { "Created", dateOrDash(Sheet.createdAt), },
         { "Raid starts", dateOrDash(Sheet.raidStartsAt), },
@@ -974,6 +978,7 @@ function PP:refreshManager()
     Manager.SheetPanel:SetShown(kind == "sheet");
     Manager.OnlyPoints:SetShown(kind == "raid");
     Manager.Export:SetShown(kind == "raid");
+    Manager.EditCampaign:SetShown(kind == "raid" and id ~= PP.UNASSIGNED);
     Manager.CloseWeek:SetShown(kind == "sheet");
 
     if (kind == "raid") then
@@ -982,7 +987,7 @@ function PP:refreshManager()
         refreshSheet(id);
     else
         Manager.Empty:Show();
-        Manager.Empty:SetText("No raids yet.\n\nImport a softres.it sheet in Gargul (|cffffd100/gl sr|r), then click |cffffd100Sync SR|r.");
+        Manager.Empty:SetText("No campaigns yet.\n\nClick |cffffd100New campaign|r to set up a team and raid with its rules, then import a softres.it sheet in Gargul (|cffffd100/gl sr|r) and click |cffffd100Sync SR|r.");
         Manager.Status:SetText("");
     end
 end
@@ -1103,7 +1108,7 @@ end
 
 function confirmCloseWeek(id)
     local Sheet = PP:sheet(id);
-    local S = PP.db.Settings;
+    local Rules = PP:rules(Sheet.raidKey);
 
     if (Sheet.closedAt) then
         local items, points = 0, 0;
@@ -1117,7 +1122,7 @@ function confirmCloseWeek(id)
             title = "Reopen week",
             heading = "Reopen this week?",
             Fields = {
-                { "Raid", PP:raidLabel(Sheet.raidKey), },
+                { "Campaign", PP:raidLabel(Sheet.raidKey), },
                 { "Softres sheet", id, },
                 { "Closed", ("%s by %s"):format(dateOrDash(Sheet.closedAt), Sheet.closedBy or "?"), },
                 { "Taken back", ("|cffff6060%d points|r from %d items"):format(points, items), },
@@ -1150,12 +1155,12 @@ function confirmCloseWeek(id)
         title = "Close week",
         heading = "Close this week and add points?",
         Fields = {
-            { "Raid", PP:raidLabel(Sheet.raidKey), },
+            { "Campaign", PP:raidLabel(Sheet.raidKey), },
             { "Softres sheet", id, },
             { "Attended", players(Plan.attended), },
             { "Bench", players(Plan.bench), },
             { "Absent", ("%s  |cff999999(no points)|r"):format(players(Plan.absent)), },
-            { "Points", ("|cff00ff00+%d|r on each reserved item%s"):format(S.pointsPerWeek, S.cap > 0 and (" (cap " .. S.cap .. ")") or ""), },
+            { "Points", ("|cff00ff00+%d|r on each reserved item%s"):format(Rules.perWeek, Rules.cap > 0 and (" (cap " .. Rules.cap .. ")") or ""), },
             { "Items gaining", ("%d items across %s"):format(#Plan.Awards, players(gainingPlayers)), },
         },
         note = table.concat(Notes, "\n\n"),
@@ -1192,10 +1197,26 @@ local function createManager()
     -- Sidebar inset on the left, the template's inset becomes the main area
     local Sidebar = CreateFrame("Frame", nil, f, "InsetFrameTemplate");
     Sidebar:SetPoint("TOPLEFT", 4, -60);
-    Sidebar:SetPoint("BOTTOMLEFT", 4, 26);
+    Sidebar:SetPoint("BOTTOMLEFT", 4, 52);
     Sidebar:SetWidth(SIDEBAR_WIDTH);
     Sidebar.ScrollBox = createList(Sidebar, -4, initSidebarRow);
     f.Sidebar = Sidebar;
+
+    local NewCampaign = CreateFrame("Button", nil, f, "UIPanelButtonTemplate");
+    NewCampaign:SetHeight(22);
+    NewCampaign:SetPoint("TOPLEFT", Sidebar, "BOTTOMLEFT", 0, -2);
+    NewCampaign:SetPoint("TOPRIGHT", Sidebar, "BOTTOMRIGHT", 0, -2);
+    NewCampaign:SetText("New campaign");
+    NewCampaign:SetScript("OnClick", function ()
+        PP:showCampaignEditor({
+            onSave = function (raidKey) selectEntry("raid", raidKey); end,
+        });
+    end);
+    NewCampaign:SetScript("OnEnter", function (self)
+        showTooltip(self, "New campaign",
+            "A team and raid with its own rules: SRs per week, points per week, cap and resets. Softres sheets are synced into a campaign.");
+    end);
+    NewCampaign:SetScript("OnLeave", GameTooltip_Hide);
 
     local Inset = f.Inset;
     Inset:ClearAllPoints();
@@ -1231,7 +1252,7 @@ local function createManager()
     Sync:SetScript("OnClick", function () PP:syncFromGargul(); end);
     Sync:SetScript("OnEnter", function (self)
         showTooltip(self, "Sync soft reserves",
-            "Read the soft reserves imported in Gargul. A new softres id starts a new sheet (you pick the team) and resets items that weren't reserved again. A known id just updates the sheet's reserves.");
+            "Read the soft reserves imported in Gargul. A new softres id starts a new sheet in a campaign you pick (or create), and resets items that weren't reserved again if the campaign says so. A known id just updates the sheet's reserves.");
     end);
     Sync:SetScript("OnLeave", GameTooltip_Hide);
 
@@ -1293,6 +1314,19 @@ local function createManager()
         showTooltip(self, "Export CSV", "Exports the rows currently listed. Clear the search to export the whole raid.");
     end);
     f.Export:SetScript("OnLeave", GameTooltip_Hide);
+
+    f.EditCampaign = bottomButton("Edit campaign", 110, f.Export, function ()
+        local kind, id = selected();
+        if (kind == "raid") then
+            PP:showCampaignEditor({ raidKey = id, });
+        end
+    end);
+    f.EditCampaign:SetScript("OnEnter", function (self)
+        local kind, id = selected();
+        showTooltip(self, "Edit campaign", kind == "raid" and PP:rulesText(id) or nil,
+            "Change this campaign's rules. Changes apply from the next sync and Close week; points already given stay.");
+    end);
+    f.EditCampaign:SetScript("OnLeave", GameTooltip_Hide);
 
     f.CloseWeek = bottomButton("Close week", 110, Log, function ()
         local kind, id = selected();

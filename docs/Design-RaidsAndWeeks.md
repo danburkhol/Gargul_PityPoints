@@ -62,10 +62,25 @@ Migration from v1: move `Points` into `Raids["default:unknown"]` with a "migrate
 
 - Close week on a sheet that isn't `lockedAt` **warns** in the confirmation dialog; it doesn't block.
 - **Rollers and winners count as attended** (`PP:autoAttended`). A manual untick is stored in `Sheet.Override`.
-- The team is **free-typed** at first sync, pre-filled with `lastTeam`. Known teams are listed in the dialog and remembered in `DB.Teams`.
+- ~~The team is free-typed at first sync.~~ Superseded by campaigns, see below.
 
 ## Known limits
 
 - Mid-week re-syncs never change points. A reserve dropped mid-week only resets when the next sheet arrives, and only if it isn't reserved again then.
 - The active sheet is the open sheet whose instances match `GetInstanceInfo()`, else the most recently synced open sheet. Two open sheets for the same instance (two teams in BT the same week) resolve to the most recently synced one. Sync the right sheet before the raid.
 - Attendance is only recorded by clients running the add-on. The person who closes the week needs the data, because SavedVariables aren't shared.
+
+## Campaigns: rules per team and raid (schema 3)
+
+Status: agreed with the user on 2026-10-29 and implemented; not yet tested in game. This section replaces the free-typed team at first sync, and the global points per week, cap, reserves per week and reset on win settings.
+
+A **campaign** is the UI name for a `Raids[raidKey]` record: a team plus raid with its own `Rules`. For example, *Gard · Black Temple* can run 2 SRs and +10 per week with no cap, while *Gard · Sunwell Plateau* runs 3 SRs and +5 per week with a cap of 40.
+
+| Topic | Decision |
+|---|---|
+| Rules per campaign | SRs per week, points per week, cap (0 = none), reset on win, reset items not reserved again |
+| Creating | Only by the user: **New campaign** in the Manager sidebar, or **New campaign...** in the import picker. The picker pre-fills the sheet's instances. |
+| Import | A new softres ID opens the picker. Campaigns for the sheet's raid are listed first, and others under "Other raids" with a warning. One match is preselected; the user confirms. Cancelling leaves the sheet unsynced. |
+| Editing | Rules only; team and raid are fixed. Changes apply from the next sync and Close week. Past points are never recalculated. `closeSummary.Rules` keeps what each close used. |
+| Upgrade | Schema 3 copies the old global settings into every existing Raid, then drops them from `Settings`. |
+| Matching | `PP:sameInstances` compares display names (`PP.INSTANCE_NAMES`), so softres slug aliases (`hyjal` / `hyjalsummit`) match. |
