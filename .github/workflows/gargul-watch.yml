@@ -1,0 +1,217 @@
+name: Watch Gargul
+
+# Once a day, check papa-smurf/Gargul for a new release tag. When there is one,
+# Claude reviews the diff against our integration points (docs/GargulIntegration.md):
+#   - no impact: bump .github/gargul-version on main, nothing else.
+#   - impact:    branch gargul/<tag>, Claude's fixes, and a PR assigned to the repo owner.
+# Needs the repo secret ANTHROPIC_API_KEY (or CLAUDE_CODE_OAUTH_TOKEN), and
+# Settings > Actions > General > "Allow GitHub Actions to create and approve pull requests".
+on:
+  schedule:
+    - cron: '23 7 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Gargul tag to evaluate (default: latest)'
+        required: false
+
+permissions:
+  contents: write
+  pull-requests: write
+  issues: write
+  id-token: write
+
+concurrency:
+  group: gargul-watch
+  cancel-in-progress: false
+
+env:
+  GARGUL_REPO: https://github.com/papa-smurf/Gargul.git
+
+jobs:
+  check:
+    name: Check for a new Gargul release
+    runs-on: ubuntu-latest
+    outputs:
+      current: ${{ steps.versions.outputs.current }}
+      latest: ${{ steps.versions.outputs.latest }}
+      changed: ${{ steps.versions.outputs.changed }}
+    steps:
+      - name: Clone project
+        uses: actions/checkout@v4
+
+      - name: Compare versions
+        id: versions
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          current=$(tr -d '[:space:]' < .github/gargul-version)
+          if [ -n "$INPUT_TAG" ]; then
+            latest="$INPUT_TAG"
+          else
+            latest=$(git ls-remote --tags --refs "$GARGUL_REPO" \
+              | sed 's#.*refs/tags/##' \
+              | grep -E '^v[0-9]+(\.[0-9]+)*$' \
+              | sort -V | tail -n1)
+          fi
+          echo "current=$current" >> "$GITHUB_OUTPUT"
+          echo "latest=$latest" >> "$GITHUB_OUTPUT"
+
+          changed=true
+          if [ -z "$latest" ] || [ "$latest" = "$current" ]; then
+            changed=false
+          elif [ "$(printf '%s\n%s\n' "$current" "$latest" | sort -V | tail -n1)" != "$latest" ]; then
+            changed=false   # older than what we track
+          elif git ls-remote --exit-code --heads origin "gargul/$latest" > /dev/null; then
+            changed=false   # already evaluated, PR branch exists
+          fi
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          echo "Tracked: $current, Gargul latest: $latest, evaluate: $changed" >> "$GITHUB_STEP_SUMMARY"
+
+  evaluate:
+    name: Evaluate Gargul ${{ needs.check.outputs.latest }}
+    needs: check
+    if: needs.check.outputs.changed == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      OLD: ${{ needs.check.outputs.current }}
+      NEW: ${{ needs.check.outputs.latest }}
+      WORK: ${{ runner.temp }}/gargul-watch
+    steps:
+      - name: Clone project
+        uses: actions/checkout@v4
+
+      - name: Clone Gargul and diff the two releases
+        run: |
+          mkdir -p "$WORK"
+          git clone --quiet --filter=blob:none "$GARGUL_REPO" "$WORK/Gargul"
+          cd "$WORK/Gargul"
+          git checkout --quiet "$NEW"
+          git log --oneline "$OLD..$NEW" > "$WORK/commits.txt"
+          git diff --stat "$OLD" "$NEW" > "$WORK/stat.txt"
+          git diff "$OLD" "$NEW" -- '*.lua' '*.toc' '*.xml' > "$WORK/gargul.diff"
+          echo "$(wc -l < "$WORK/commits.txt") commits, $(wc -l < "$WORK/gargul.diff") diff lines" >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Install luacheck
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y luarocks
+          sudo luarocks install luacheck
+
+      - name: Ask Claude to evaluate
+        uses: anthropics/claude-code-action@v1
+        with:
+          anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          claude_args: >-
+            --max-turns 80
+            --add-dir ${{ runner.temp }}/gargul-watch
+            --allowedTools "Read,Edit,Write,Glob,Grep,Bash(luacheck:*)"
+          prompt: |
+            Gargul (the loot add-on this repo integrates with) released ${{ env.NEW }}.
+            This repo was last checked against ${{ env.OLD }}. Decide whether Gargul_PityPoints
+            needs changes to keep working, and make them if so.
+
+            Inputs, all under ${{ env.WORK }}:
+            - Gargul/          Gargul source checked out at ${{ env.NEW }} (read only).
+            - gargul.diff      git diff ${{ env.OLD }}..${{ env.NEW }} of Gargul's .lua/.toc/.xml files.
+            - stat.txt         diffstat of every changed file.
+            - commits.txt      commit list.
+
+            Steps:
+            1. Read AGENTS.md and docs/GargulIntegration.md. The doc lists every Gargul global,
+               event, method, data shape, setting key and line ref we rely on.
+            2. Check each of those against gargul.diff and the new source: renamed or removed
+               functions, changed event names or arguments, changed table shapes (RollOff.CurrentRollOff,
+               Rolls, AwardEntry, SoftRes data, MetaData.importString), changed whisper commands,
+               changed setting keys, and new or dropped interface numbers in Gargul.toc.
+               Grep this repo (Gargul.lua mainly) for every Gargul symbol it uses.
+            3. If nothing we use changed in a way that affects us, change no files.
+            4. Otherwise, fix this repo following AGENTS.md conventions, update docs/GargulIntegration.md
+               (line refs, shapes, gotchas), and run `luacheck .` until it reports 0 warnings.
+               Do not touch .github/, the `## Version:` line or the line saying which Gargul version
+               the doc was verified against; the workflow handles those.
+            5. Gargul is All Rights Reserved. Never copy Gargul code into this repo; integrate only
+               through runtime hooks, as the existing code does.
+
+            Finally, write ${{ env.WORK }}/verdict.md. Its first line must be exactly one of:
+              VERDICT: NO_IMPACT
+              VERDICT: NEEDS_UPDATE
+            Use NEEDS_UPDATE if you changed any file, or if something needs a human decision.
+            After that line, write a Markdown pull request body: what changed in Gargul that matters
+            to us (with file and function names), what you changed and why, anything you were unsure
+            of, and a checklist of what to test in game. There is no WoW client here, so say plainly
+            that in-game behaviour is untested. For NO_IMPACT, a short note on what you checked.
+
+      - name: Read the verdict
+        id: verdict
+        run: |
+          if [ ! -s "$WORK/verdict.md" ]; then
+            echo "Claude did not write verdict.md" >&2
+            exit 1
+          fi
+          verdict=$(head -n1 "$WORK/verdict.md" | tr -d '\r' | sed 's/^VERDICT: *//')
+          case "$verdict" in
+            NO_IMPACT|NEEDS_UPDATE) ;;
+            *) echo "Unexpected verdict line: $verdict" >&2; exit 1 ;;
+          esac
+          if [ "$verdict" = NO_IMPACT ] && [ -n "$(git status --porcelain)" ]; then
+            echo "Claude said NO_IMPACT but changed files; opening a PR instead." >> "$GITHUB_STEP_SUMMARY"
+            verdict=NEEDS_UPDATE
+          fi
+          echo "verdict=$verdict" >> "$GITHUB_OUTPUT"
+          { echo "## Gargul $NEW: $verdict"; tail -n +2 "$WORK/verdict.md"; } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Record the new Gargul version
+        run: |
+          printf '%s\n' "$NEW" > .github/gargul-version
+          sed -i "s/verified against \*\*Gargul $OLD\*\*/verified against **Gargul $NEW**/" docs/GargulIntegration.md
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: No impact, update main
+        if: steps.verdict.outputs.verdict == 'NO_IMPACT'
+        run: |
+          git add .github/gargul-version docs/GargulIntegration.md
+          git commit -m "Gargul $NEW: no changes needed"
+          if ! git push origin HEAD:main; then
+            # main is protected: fall back to a PR.
+            git switch -c "gargul/$NEW"
+            git push origin "gargul/$NEW"
+            gh pr create --base main --head "gargul/$NEW" \
+              --title "Gargul $NEW: no changes needed" \
+              --body-file <(tail -n +2 "$WORK/verdict.md")
+          fi
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Needs update, open a pull request
+        if: steps.verdict.outputs.verdict == 'NEEDS_UPDATE'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          OWNER: ${{ github.repository_owner }}
+        run: |
+          branch="gargul/$NEW"
+          git switch -c "$branch"
+          git add -A
+          git commit -m "Support Gargul $NEW" -m "Co-Authored-By: Claude <noreply@anthropic.com>"
+          git push origin "$branch"
+
+          if luacheck . > "$WORK/luacheck.txt" 2>&1; then lint="passed"; else lint="**failed**"; fi
+          {
+            tail -n +2 "$WORK/verdict.md"
+            echo
+            echo "---"
+            echo "Gargul $OLD → $NEW ([compare](https://github.com/papa-smurf/Gargul/compare/$OLD...$NEW)). Luacheck $lint."
+            echo "PRs opened by Actions don't trigger the Lint workflow; luacheck ran in this job instead."
+            echo
+            echo "@$OWNER please test in game before merging."
+          } > "$WORK/pr-body.md"
+
+          title="Support Gargul $NEW"
+          gh pr create --base main --head "$branch" --title "$title" --body-file "$WORK/pr-body.md" \
+              --assignee "$OWNER" --reviewer "$OWNER" \
+            || gh pr create --base main --head "$branch" --title "$title" --body-file "$WORK/pr-body.md" \
+              --assignee "$OWNER"

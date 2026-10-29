@@ -54,6 +54,10 @@ A WoW Classic add-on that tracks soft-reserve "pity points" per team and raid, a
 
 - GitHub: `danburkhol/Gargul_PityPoints`, branch `main`. This folder is both the repo and the live in-game add-on.
 - CI: `.github/workflows/lint.yml` runs luacheck on pushes and PRs.
+- Gargul watch:
+  - `.github/workflows/gargul-watch.yml` runs daily. When Gargul tags a release newer than `.github/gargul-version`, Claude checks the diff against `docs/GargulIntegration.md`.
+  - No impact: it bumps `.github/gargul-version` on `main`. Impact: it opens a PR from `gargul/<tag>` assigned to the repo owner.
+  - It needs the repo secret `ANTHROPIC_API_KEY` (or `CLAUDE_CODE_OAUTH_TOKEN`) and "Allow GitHub Actions to create and approve pull requests".
 - Releases:
   - `.github/workflows/release.yml` runs the BigWigs packager when a `v*` tag is pushed and uploads the build to CurseForge.
   - It needs the repo secrets `CF_API_KEY` and `X_CURSE_PROJECT_ID`.
