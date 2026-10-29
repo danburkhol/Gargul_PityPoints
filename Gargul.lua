@@ -7,6 +7,10 @@
       buildSortedRollData      -> (wrapped) show "PP raw+bonus" in the roll window's Note column
       GL.ROLLOFF_STOPPED       -> announce the results
       GL.ITEM_AWARDED          -> record the win on the active sheet, reset points on win
+      CHAT_MSG_WHISPER / !sr   -> !pp reply and the follow-up to Gargul's !sr reply
+
+    Hooks are installed once and check PP:gargulFeature(setting) each time they run, so every
+    feature (and the "gargul" master switch) can be toggled in Settings without a /reload.
 ]]
 
 local _, PP = ...;
@@ -115,7 +119,10 @@ function PP:readSoftresSheet()
 end
 
 function PP:onSoftResImported()
-    if (not self.db.Settings.autoSync) then
+    if (not self:gargulFeature()) then
+        return;
+    end
+    if (not self:gargulFeature("autoSync")) then
         return self:print("Soft reserves imported. Auto sync is off, click |cffffff00Sync SR|r in the |cffffff00/pp|r window.");
     end
 
@@ -127,7 +134,7 @@ end
 --- Fired by Gargul right after it inserts a Roll and right before it refreshes the roll window
 function PP:onRollAccepted()
     local RollOff = GL.RollOff;
-    if (not RollOff:startedByMe()) then
+    if (not self:gargulFeature() or not RollOff:startedByMe()) then
         return; -- Only the loot master's numbers matter
     end
 
@@ -144,7 +151,7 @@ function PP:onRollAccepted()
     Roll.ppBonus = 0;
 
     local raidKey = self:activeRaidKey();
-    if (not raidKey) then
+    if (not raidKey or not self:gargulFeature("rollBonus")) then
         return;
     end
 
@@ -180,13 +187,17 @@ local function wrapRollTable()
 
     GL.RollOff.buildSortedRollData = function (RollOff, ...)
         local Entries = original(RollOff, ...);
+        if (not PP:gargulFeature()) then
+            return Entries;
+        end
 
+        local showNote = PP:gargulFeature("rollNote");
         for _, Entry in ipairs(Entries) do
             local Roll = findRoll(Entry.player, Entry.amount);
             Entry.ppRaw = Roll and Roll.ppRaw or Entry.amount;
             Entry.ppBonus = Roll and Roll.ppBonus or 0;
 
-            if (Entry.ppBonus > 0) then
+            if (showNote and Entry.ppBonus > 0) then
                 -- Shown in Gargul's "Note" column, the "Roll" column already shows the total
                 tinsert(Entry.rollNotes, 1, ("|cff00ff00PP %d+%d|r"):format(Entry.ppRaw, Entry.ppBonus));
             end
@@ -243,7 +254,7 @@ function PP:announceResults()
 end
 
 function PP:onRollOffStopped()
-    if (not self.db.Settings.announce or not GL.RollOff:startedByMe()) then
+    if (not self:gargulFeature("announce") or not GL.RollOff:startedByMe()) then
         return;
     end
 
@@ -255,6 +266,9 @@ end
 --[[ WINS ]]
 
 function PP:onItemAwarded(_, AwardEntry)
+    if (not self:gargulFeature("trackWins")) then
+        return;
+    end
     if (type(AwardEntry) ~= "table" or not AwardEntry.awardedTo or not AwardEntry.itemID) then
         return;
     end
@@ -343,7 +357,7 @@ function PP:onWhisper(message, sender)
     local isCommand = message == "!pp" or message == "!pitypoints"
         or message:find("^!pp%s") or message:find("^!pitypoints%s");
 
-    if (not isCommand or not self.db.Settings.whisperReply or not mayReply() or throttled(sender)) then
+    if (not isCommand or not self:gargulFeature("whisperReply") or not mayReply() or throttled(sender)) then
         return;
     end
 
@@ -352,7 +366,7 @@ end
 
 --- Runs after Gargul's own !sr reply: the points on each item the player currently reserves
 function PP:onSoftResWhisper(message, sender)
-    if (not self.db.Settings.srFollowUp or type(message) ~= "string") then
+    if (not self:gargulFeature("srFollowUp") or type(message) ~= "string") then
         return;
     end
 
@@ -398,6 +412,10 @@ function PP:runTest()
     local itemID = RollOff.CurrentRollOff.itemID;
     if (not RollOff.inProgress or not RollOff:startedByMe() or not itemID) then
         return self:print("Start a roll-off first: |cffffff00/gl roll [item]|r then click Start, then run |cffffff00/pp test|r.");
+    end
+
+    if (not self:gargulFeature("rollBonus")) then
+        return self:print("Adding points to rolls is off: turn on |cffffff00Gargul integration|r and |cffffff00Add points to rolls|r in |cffffff00/pp config|r.");
     end
 
     local raidKey = self:activeRaidKey();
@@ -458,5 +476,9 @@ function PP:initGargul()
         end));
     end
 
-    self:print(("Hooked into Gargul %s. Type |cffffff00/pp|r to open the manager."):format(tostring(GL.version)));
+    if (self:gargulFeature()) then
+        self:print(("Hooked into Gargul %s. Type |cffffff00/pp|r to open the manager."):format(tostring(GL.version)));
+    else
+        self:print("Gargul integration is off in settings (|cffffff00/pp config|r). Points and the manager still work.");
+    end
 end

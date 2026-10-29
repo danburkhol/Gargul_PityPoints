@@ -44,7 +44,20 @@ function PP:initSettings()
     end
 
     local function checkbox(key, name, tooltip)
-        Settings.CreateCheckbox(category, register(key, Settings.VarType.Boolean, name), tooltip);
+        return Settings.CreateCheckbox(category, register(key, Settings.VarType.Boolean, name), tooltip);
+    end
+
+    -- Greys out an option while its parent setting is off
+    local function dependsOn(initializer, parentInitializer, ...)
+        local Keys = { ..., };
+        initializer:SetParentInitializer(parentInitializer, function ()
+            for _, key in ipairs(Keys) do
+                if (not S[key]) then
+                    return false;
+                end
+            end
+            return true;
+        end);
     end
 
     header("Manager");
@@ -68,12 +81,6 @@ function PP:initSettings()
         "Maximum points a player can have on one item. Off = no cap.", formatCap);
     slider("reservesPerWeek", "Reserves per week", 1, 10, 1,
         "How many items each player may soft reserve. Players over the limit are listed when syncing.");
-    checkbox("resetOnWin", "Reset on win",
-        "When Gargul awards an item, reset the winner's points on that item to zero.");
-
-    header("Soft reserves");
-    checkbox("autoSync", "Sync automatically on import",
-        "When a softres.it sheet is imported in Gargul, sync it straight away. A new softres id starts a new sheet (you'll be asked for the team); re-importing the same sheet only records what changed.");
 
     header("Attendance");
     checkbox("recordAttendance", "Record raid attendance",
@@ -81,24 +88,49 @@ function PP:initSettings()
     slider("snapshotMinutes", "Attendance check interval (minutes)", 1, 30, 1,
         "How often to note the raid roster while inside a raid instance, on top of boss kills.");
 
-    header("Announcements");
-    checkbox("announce", "Announce results",
-        "When a roll-off you started ends, post the winner with their roll, points and total, followed by the other rolls.");
+    header("Gargul integration");
+    local gargul = checkbox("gargul", "Enable Gargul integration",
+        "Master switch for everything below. When off, this add-on doesn't react to Gargul at all: no bonus on rolls, no syncing on import, no win tracking, announcements or whisper replies. Points, the manager and the Sync SR button still work. Changes apply straight away, no /reload needed.");
 
+    local function feature(key, name, tooltip)
+        local initializer = checkbox(key, name, tooltip);
+        dependsOn(initializer, gargul, "gargul");
+        return initializer;
+    end
+
+    feature("autoSync", "Sync automatically on import",
+        "When a softres.it sheet is imported in Gargul, sync it straight away. A new softres id starts a new sheet (you'll be asked for the team); re-importing the same sheet only records what changed.");
+    feature("rollBonus", "Add points to rolls",
+        "When a player rolls on an item they soft reserved, add their pity points to the roll itself, so Gargul ranks the roll window by the total.");
+    feature("rollNote", "Show points in the roll window",
+        "Add \"PP roll+points\" to the Note column of Gargul's roll window for rolls that got a bonus.");
+
+    local trackWins = feature("trackWins", "Record wins from Gargul awards",
+        "When Gargul awards an item, record the win on the active sheet. Close week doesn't add points to items a player won.");
+    dependsOn(checkbox("resetOnWin", "Reset points on win",
+        "When Gargul awards an item, reset the winner's points on that item to zero."), trackWins, "gargul", "trackWins");
+
+    local announce = feature("announce", "Announce results",
+        "When a roll-off you started ends, post the winner with their roll, points and total, followed by the other rolls.");
     local channel = register("channel", Settings.VarType.String, "Announcement channel");
-    Settings.CreateDropdown(category, channel, function ()
+    dependsOn(Settings.CreateDropdown(category, channel, function ()
         local Container = Settings.CreateControlTextContainer();
         for _, Option in ipairs(PP.CHANNELS) do
             Container:Add(Option[1], Option[2]);
         end
         return Container:GetData();
-    end, "Where results are posted.");
+    end, "Where results are posted."), announce, "gargul", "announce");
 
-    header("Whispers");
-    checkbox("whisperReply", "Reply to !pp whispers",
+    feature("whisperReply", "Reply to !pp whispers",
         "When a player whispers you !pp or !pitypoints, reply with all their pity points per raid. Like Gargul's !sr, only the loot master and assists reply while in a group.");
-    checkbox("srFollowUp", "Add points to Gargul's !sr reply",
+    feature("srFollowUp", "Add points to Gargul's !sr reply",
         "After Gargul answers a !sr whisper, send a second whisper with the player's pity points on each item they reserved.");
+
+    -- Options only re-check their direct parent, so pass master switch changes down to the grandchildren
+    gargul:GetSetting():SetValueChangedCallback(function ()
+        trackWins:GetSetting():NotifyUpdate();
+        announce:GetSetting():NotifyUpdate();
+    end);
 
     header("Display");
 

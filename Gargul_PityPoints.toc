@@ -2,7 +2,7 @@
 ## Title: Gargul |c00967FD2Pity Points|r
 ## Notes: Soft-reserve pity points for Gargul: bonus points on rolls, a manager window, CSV export and a minimap / LDB launcher.
 ## Author: danburkhol
-## Version: 0.3.2
+## Version: 0.4.0
 ## IconTexture: Interface\Icons\INV_Misc_Coin_01
 ## Dependencies: Gargul
 ## SavedVariables: GargulPityPointsDB

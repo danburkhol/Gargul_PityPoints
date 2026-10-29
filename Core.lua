@@ -19,13 +19,18 @@ PP.DEFAULTS = {
     pointsPerWeek = 10,
     cap = 0, -- 0 = no cap
     resetOnWin = true,
+    -- Gargul integration: a master switch, then one per hook (see Gargul.lua)
+    gargul = true,
     autoSync = true,
-    recordAttendance = true,
-    snapshotMinutes = 5,
+    rollBonus = true,
+    rollNote = true,
+    trackWins = true,
     announce = true,
     channel = "RAID",
     whisperReply = true,
     srFollowUp = true,
+    recordAttendance = true,
+    snapshotMinutes = 5,
     sheetDate = "created",
     minimap = { hide = false, },
 };
@@ -87,6 +92,13 @@ end
 
 function PP:gargul()
     return _G.Gargul;
+end
+
+--- Whether a Gargul integration feature is on: the master switch and, if given, the feature's own setting.
+--- Hooks are always installed and check this when they run, so toggling needs no /reload.
+function PP:gargulFeature(key)
+    local S = self.db and self.db.Settings;
+    return S ~= nil and S.gargul and (key == nil or S[key]) and true or false;
 end
 
 --- Same normalisation Gargul uses for softres lookups: lowercase, realm dropped when it's our own

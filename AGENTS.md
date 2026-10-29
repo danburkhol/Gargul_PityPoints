@@ -33,6 +33,7 @@ A WoW Classic add-on that tracks soft-reserve "pity points" per team and raid, a
 - `playerKey = strlower(GL:disambiguateName(name))`, which matches Gargul's softres keys.
 
 **Rules:**
+- Every Gargul hook checks `PP:gargulFeature(setting)` when it runs: the `gargul` master switch plus that feature's own setting. Hooks stay installed, so settings apply without a `/reload`. New Gargul hooks get a setting too (see `docs/GargulIntegration.md`).
 - Points change **only** through `PP:setPoints`, which writes the ledger and fires `PP.callbacks:Fire("POINTS_CHANGED")`.
 - Sheet mutations also call `PP:notify()`. The UI refreshes on that callback.
 

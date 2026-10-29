@@ -91,16 +91,18 @@ Offline check: a Python one-off (base64 → zlib → json) on `WTF/Account/*/Sav
 
 ## Implemented in Gargul_PityPoints (see `Gargul.lua`)
 
-| Requirement | Hook |
-|---|---|
-| Read SR / sheets | `GL.SOFTRES_IMPORTED` → `PP:onSoftResImported()` → `PP:syncFromGargul()` (when the `autoSync` setting is on). `PP:readSoftresSheet()` combines Gargul's materialized reserves with the decoded `importString`. |
-| Bonus added to roll and ranking | `GL.ROLLOFF_ROLL_ACCEPTED` → mutate the last `Roll`, using the points of `PP:activeRaidKey()`. Also records the roller on the active sheet (attendance evidence). |
-| Roll window shows raw + bonus | wrap `GL.RollOff.buildSortedRollData` |
-| Results announcement | `GL.ROLLOFF_STOPPED` + leeway delay |
-| Win → sheet + reset on win | `GL.ITEM_AWARDED` → `PP:recordWin()` |
-| Attendance | Not from Gargul: `ENCOUNTER_END` + a 30s ticker in `Sheets.lua` |
-| `!pp` / `!pitypoints` whisper | Our own `CHAT_MSG_WHISPER` frame. It replies only when `GL.SoftRes:userIsAllowedToBroadcast()` is true (not in a group, or master looter / assist), the same rule Gargul uses for `!sr`. Throttled per sender. |
-| `!sr` follow-up | `hooksecurefunc(GL.SoftRes, "handleWhisperCommand", …)`. Gargul's `CHAT_MSG_WHISPER` listener (`SoftRes.lua` ~74) only calls it after its checks (`available()`, `userIsAllowedToBroadcast()`, `SoftRes.enableWhisperCommand`), so the hook inherits them. The prefixes come from `Gargul_L["!sr|!softres|!softreserve"]`. Gargul replies after `onItemLoadDo`, so ours waits 1.5s. |
+Every hook is installed once at boot and checks `PP:gargulFeature(setting)` each time it runs. It returns true only when the `gargul` master switch and that feature's own setting are on. Toggling in Settings therefore takes effect without a `/reload`. A new hook needs a setting in `PP.DEFAULTS` and in the Gargul integration section of `UI/Settings.lua`. With the master switch off, the manual **Sync SR** button still reads Gargul's softres data.
+
+| Requirement | Setting | Hook |
+|---|---|---|
+| Read SR / sheets | `autoSync` | `GL.SOFTRES_IMPORTED` → `PP:onSoftResImported()` → `PP:syncFromGargul()`. `PP:readSoftresSheet()` combines Gargul's materialized reserves with the decoded `importString`. |
+| Bonus added to roll and ranking | `rollBonus` | `GL.ROLLOFF_ROLL_ACCEPTED` → mutate the last `Roll`, using the points of `PP:activeRaidKey()`. With the master switch on, it also records the roller on the active sheet (attendance evidence), even when `rollBonus` is off. |
+| Roll window shows raw + bonus | `rollNote` | wrap `GL.RollOff.buildSortedRollData`. With the master switch off it passes Gargul's entries through untouched. |
+| Results announcement | `announce`, `channel` | `GL.ROLLOFF_STOPPED` + leeway delay |
+| Win → sheet + reset on win | `trackWins`, `resetOnWin` | `GL.ITEM_AWARDED` → `PP:recordWin()` |
+| Attendance | `recordAttendance` (not a Gargul hook) | `ENCOUNTER_END` + a 30s ticker in `Sheets.lua` |
+| `!pp` / `!pitypoints` whisper | `whisperReply` | Our own `CHAT_MSG_WHISPER` frame. It replies only when `GL.SoftRes:userIsAllowedToBroadcast()` is true (not in a group, or master looter / assist), the same rule Gargul uses for `!sr`. Throttled per sender. |
+| `!sr` follow-up | `srFollowUp` | `hooksecurefunc(GL.SoftRes, "handleWhisperCommand", …)`. Gargul's `CHAT_MSG_WHISPER` listener (`SoftRes.lua` ~74) only calls it after its checks (`available()`, `userIsAllowedToBroadcast()`, `SoftRes.enableWhisperCommand`), so the hook inherits them. The prefixes come from `Gargul_L["!sr|!softres|!softreserve"]`. Gargul replies after `onItemLoadDo`, so ours waits 1.5s. |
 
 ## Not implemented yet: recipes
 

@@ -27,8 +27,16 @@ Built for WoW Classic, TBC Anniversary. Requires Gargul.
   - Like Gargul, only the loot master and assists reply while in a group.
 - **Launcher:** a minimap button (optional), and a LibDataBroker launcher for Titan Panel and other broker displays.
 - **Settings:** Esc > Options > AddOns > Gargul Pity Points.
-  - Points per week, points cap, reserves per week and reset on win.
-  - Auto sync, attendance recording, announcements and channel, and whisper replies.
+  - Points per week, points cap, reserves per week and attendance recording.
+  - **Gargul integration:** a master switch, plus one switch for each hook:
+    - auto sync;
+    - points on rolls;
+    - the roll-window note;
+    - win tracking and reset on win;
+    - the announcement and its channel;
+    - `!pp` and `!sr` whispers.
+
+    Changes apply without a `/reload`.
 
 ### Slash commands
 
