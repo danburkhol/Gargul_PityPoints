@@ -4,9 +4,11 @@
       readSoftresSheet         -> Gargul's softres data + the raw softres.it export (instances, lockedAt, ...)
       GL.SOFTRES_IMPORTED      -> sync the sheet (asks for the team on a new softres id)
       GL.ROLLOFF_ROLL_ACCEPTED -> add pity points to the roll itself, so Gargul ranks by total; record the roller
-      buildSortedRollData      -> (wrapped) show "PP raw+bonus" in the roll window's Note column
-      GL.ROLLOFF_STOPPED       -> announce the results
-      GL.ITEM_AWARDED          -> record the win on the active sheet, reset points on win
+      buildSortedRollData      -> (wrapped) show "PP raw+bonus" in the Note column, add "No roll yet" rows for missing reservers
+      GL.ROLLOFF_STARTED       -> refresh the roll window so missing reservers show before anyone rolls
+      GL.ROLLOFF_STOPPED       -> raid warning naming reservers who didn't roll
+      GL.ITEM_AWARDED          -> record the win on the active sheet, reset points on win, announce the results
+      GL.LOOT_ANNOUNCED        -> auto-award items only one raider soft reserved
       CHAT_MSG_WHISPER / !sr   -> !pp reply and the follow-up to Gargul's !sr reply
 
     Hooks are installed once and check PP:gargulFeature(setting) each time they run, so every
@@ -151,11 +153,11 @@ function PP:onRollAccepted()
     Roll.ppBonus = 0;
 
     local raidKey = self:activeRaidKey();
-    if (not raidKey or not self:gargulFeature("rollBonus")) then
+    if (not self:gargulFeature("rollBonus") or (not raidKey and not self.db.Settings.sharePoints)) then
         return;
     end
 
-    local bonus = self:getPoints(raidKey, Roll.player, itemID);
+    local bonus = self:rollPoints(raidKey, Roll.player, itemID);
     if (bonus <= 0) then
         return;
     end
@@ -172,7 +174,7 @@ function PP:onRollAccepted()
     Roll.amount = Roll.ppRaw + bonus;
 end
 
---[[ ROLL WINDOW: SHOW RAW + BONUS ]]
+--[[ ROLL WINDOW: SHOW RAW + BONUS, AND WHO HASN'T ROLLED ]]
 
 local function findRoll(player, amount)
     for _, Roll in pairs(GL.RollOff.CurrentRollOff.Rolls or {}) do
@@ -180,6 +182,58 @@ local function findRoll(player, amount)
             return Roll;
         end
     end
+end
+
+--- Soft reservers of the current roll-off's item who are in the group and haven't rolled yet (lowercase keys, sorted)
+function PP:missingRollers()
+    local CurrentRollOff = GL.RollOff.CurrentRollOff;
+    local itemID = tonumber(CurrentRollOff.itemID);
+    if (not itemID) then
+        return {};
+    end
+
+    local Rolled = {};
+    for _, Roll in pairs(CurrentRollOff.Rolls or {}) do
+        Rolled[self:key(Roll.player)] = true;
+    end
+
+    local Reservers = GL.SoftRes:byItemID(itemID, true);
+    for key, Items in pairs(self.TestReserves) do
+        if (Items[itemID]) then
+            tinsert(Reservers, key);
+        end
+    end
+
+    local Missing, Seen = {}, {};
+    for _, name in ipairs(Reservers) do
+        local key = self:key(name);
+        if (not Rolled[key] and not Seen[key]) then
+            Seen[key] = true;
+            tinsert(Missing, key);
+        end
+    end
+    table.sort(Missing);
+
+    return Missing;
+end
+
+-- Set while Gargul fills the loot master's roll window, so only that table gets "No roll yet" rows
+local fillingRollWindow = false;
+
+local function missingRollEntry(key)
+    return {
+        player = key,
+        displayName = PP:displayName(key),
+        class = PP:playerClass(key) or GL:playerClassByName(key),
+        amount = 0, -- lib-st sorts the Roll column numerically
+        plusOnes = 0,
+        plusOnesRaw = 0,
+        classification = "",
+        sortPriority = 99999, -- Below every real roll
+        rollNotes = { "|cffff4040No roll yet|r", },
+        relevantGear = {},
+        ppMissing = true,
+    };
 end
 
 local function wrapRollTable()
@@ -191,7 +245,7 @@ local function wrapRollTable()
             return Entries;
         end
 
-        local showNote = PP:gargulFeature("rollNote");
+        local showNote = PP:gargulFeature("rollBonus");
         for _, Entry in ipairs(Entries) do
             local Roll = findRoll(Entry.player, Entry.amount);
             Entry.ppRaw = Roll and Roll.ppRaw or Entry.amount;
@@ -203,11 +257,27 @@ local function wrapRollTable()
             end
         end
 
+        if (fillingRollWindow and PP:gargulFeature("trackMissingRolls") and RollOff:startedByMe()) then
+            for _, key in ipairs(PP:missingRollers()) do
+                tinsert(Entries, missingRollEntry(key));
+            end
+        end
+
         return Entries;
+    end
+
+    local refresh = GL.RollOff.refreshRollsTable;
+    GL.RollOff.refreshRollsTable = function (...)
+        fillingRollWindow = true;
+        local ok, err = pcall(refresh, ...);
+        fillingRollWindow = false;
+        if (not ok) then
+            error(err, 0);
+        end
     end
 end
 
---[[ ANNOUNCE WHEN THE ROLL-OFF ENDS ]]
+--[[ ANNOUNCE RESULTS ON AWARD, MISSING ROLLS WHEN THE ROLL-OFF ENDS ]]
 
 local function send(message)
     local channel = PP.db.Settings.channel;
@@ -224,52 +294,102 @@ local function send(message)
     GL:sendChatMessage(message, channel, nil, nil, false);
 end
 
-function PP:announceResults()
-    -- Same order the loot master sees in the roll window (softres / prio brackets first, then total)
-    local Entries = GL.RollOff:buildSortedRollData();
-    if (#Entries == 0) then
-        return;
-    end
+--- Post the winner of an award with roll + points = total, then everyone else's best roll
+function PP:announceAward(AwardEntry)
+    local item = AwardEntry.itemLink or self:itemName(AwardEntry.itemID);
+    local winner = self:key(AwardEntry.awardedTo);
 
-    local Seen = {};
-    local Lines = {};
-    for _, Entry in ipairs(Entries) do
-        if (not Seen[Entry.player]) then
-            Seen[Entry.player] = true;
-
-            local name = GL:disambiguateName(Entry.player);
-            local raw, bonus = Entry.ppRaw or Entry.amount, Entry.ppBonus or 0;
-            if (#Lines == 0) then
-                tinsert(Lines, ("%s wins with a roll of %d and points of %d for a total of %d."):format(name, raw, bonus, Entry.amount));
-            else
-                tinsert(Lines, ("%s: %d + %d = %d"):format(name, raw, bonus, Entry.amount));
-            end
+    -- AwardEntry.Rolls is Gargul's copy of the roll-off's rolls, our ppRaw / ppBonus included
+    local Best = {};
+    for _, Roll in pairs(AwardEntry.Rolls or {}) do
+        local key = Roll.player and self:key(Roll.player);
+        if (key and (not Best[key] or (Roll.amount or 0) > (Best[key].amount or 0))) then
+            Best[key] = Roll;
         end
     end
 
-    send(Lines[1]);
-    if (#Lines > 1) then
-        send("Others: " .. table.concat(Lines, ", ", 2));
+    -- raw, bonus, total
+    local function describe(Roll)
+        return Roll.ppRaw or Roll.amount or 0, Roll.ppBonus or 0, Roll.amount or 0;
+    end
+
+    local name = GL:disambiguateName(AwardEntry.awardedTo);
+    local Won = Best[winner];
+    if (Won) then
+        send(("%s wins %s with a roll of %d and points of %d for a total of %d."):format(name, item, describe(Won)));
+    elseif (next(Best) == nil and self:isReserved(AwardEntry.awardedTo, AwardEntry.itemID)) then
+        return send(("%s wins %s as the only soft reserve."):format(name, item));
+    else
+        send(("%s wins %s."):format(name, item));
+    end
+
+    local Others = {};
+    for key, Roll in pairs(Best) do
+        if (key ~= winner) then
+            tinsert(Others, Roll);
+        end
+    end
+    table.sort(Others, function (a, b)
+        return (a.amount or 0) > (b.amount or 0);
+    end);
+
+    local Parts = {};
+    for _, Roll in ipairs(Others) do
+        local raw, bonus, total = describe(Roll);
+        tinsert(Parts, ("%s: %d + %d = %d"):format(GL:disambiguateName(Roll.player), raw, bonus, total));
+    end
+    if (#Parts > 0) then
+        send("Others: " .. table.concat(Parts, ", "));
+    end
+end
+
+function PP:announceMissingRolls()
+    local Missing = self:missingRollers();
+    if (#Missing == 0) then
+        return;
+    end
+
+    local Names = {};
+    for _, key in ipairs(Missing) do
+        tinsert(Names, self:displayName(key));
+    end
+
+    local CurrentRollOff = GL.RollOff.CurrentRollOff;
+    GL:sendChatMessage(("No roll on %s from: %s"):format(
+        CurrentRollOff.itemLink or self:itemName(CurrentRollOff.itemID), table.concat(Names, ", ")
+    ), "RAID_WARNING", nil, nil, false);
+end
+
+function PP:onRollOffStarted()
+    if (self:gargulFeature("trackMissingRolls") and GL.RollOff:startedByMe()) then
+        GL.RollOff:refreshRollsTable(); -- Show the reservers before anyone rolls
     end
 end
 
 function PP:onRollOffStopped()
-    if (not self:gargulFeature("announce") or not GL.RollOff:startedByMe()) then
+    if (not self:gargulFeature("trackMissingRolls") or not GL.RollOff:startedByMe()) then
         return;
     end
 
     -- Gargul keeps accepting rolls for RollTracking.rollOffEndLeeway seconds after the stop
     local leeway = GL.Settings:get("RollTracking.rollOffEndLeeway", 1) or 1;
-    C_Timer.After(leeway + 0.5, safe(function () PP:announceResults(); end));
+    C_Timer.After(leeway + 0.5, safe(function () PP:announceMissingRolls(); end));
 end
 
 --[[ WINS ]]
 
 function PP:onItemAwarded(_, AwardEntry)
-    if (not self:gargulFeature("trackWins")) then
+    if (type(AwardEntry) ~= "table" or not AwardEntry.awardedTo or not AwardEntry.itemID) then
         return;
     end
-    if (type(AwardEntry) ~= "table" or not AwardEntry.awardedTo or not AwardEntry.itemID) then
+
+    -- Before recordWin, so the announcement still sees the points that are about to reset.
+    -- Awards other officers make reach us over comms too; only the one who awarded announces.
+    if (self:gargulFeature("announce") and GL:iEquals(AwardEntry.awardedBy, GL.User.fqn)) then
+        self:announceAward(AwardEntry);
+    end
+
+    if (not self:gargulFeature("trackWins")) then
         return;
     end
 
@@ -278,6 +398,49 @@ function PP:onItemAwarded(_, AwardEntry)
         self:print(("%s won %s, pity points reset (had %d)."):format(
             GL:disambiguateName(AwardEntry.awardedTo), AwardEntry.itemLink or AwardEntry.itemID, had
         ));
+    end
+end
+
+--[[ AUTO-AWARD ITEMS ONLY ONE RAIDER SOFT RESERVED ]]
+
+-- sourceGUID .. ":" .. itemID of drops already auto-awarded this session, so reopening the loot window doesn't award again
+local autoAwarded = {};
+
+--- The single in-group reserver of an item, or nil when nobody or several players reserved it
+local function soleReserver(itemID)
+    local Keys = {};
+    for _, name in ipairs(GL.SoftRes:byItemID(itemID, true)) do
+        Keys[PP:key(name)] = name;
+    end
+
+    local only, name = next(Keys);
+    if (only and next(Keys, only) == nil) then
+        return name;
+    end
+end
+
+function PP:onLootAnnounced()
+    if (not self:gargulFeature("autoAwardSR") or not GL.User.isMasterLooter or GL.GetLootMethod() ~= "master") then
+        return;
+    end
+
+    local Done = {}; -- One copy per item: duplicates in the same window are left for a roll
+    for slot = 1, GetNumLootItems() do
+        local link = GetLootSlotLink(slot);
+        local itemID = link and GL:getItemIDFromLink(link);
+        local source = GetLootSourceInfo(slot) or "?";
+        local id = itemID and (source .. ":" .. itemID);
+
+        if (itemID and not Done[itemID]) then
+            Done[itemID] = true;
+
+            local winner = not autoAwarded[id] and soleReserver(itemID);
+            if (winner) then
+                autoAwarded[id] = true;
+                self:print(("Auto-awarding %s to %s, the only soft reserve in the raid."):format(link, self:displayName(self:key(winner))));
+                GL.AwardedLoot:addWinner({ winner = winner, itemLink = link, });
+            end
+        end
     end
 end
 
@@ -392,7 +555,7 @@ function PP:onSoftResWhisper(message, sender)
     local Parts = {};
     for idString in pairs(Reserves) do
         local itemID = tonumber(idString);
-        tinsert(Parts, ("%s %d"):format(self:itemLink(itemID) or self:itemName(itemID), self:getPoints(raidKey, sender, itemID)));
+        tinsert(Parts, ("%s %d"):format(self:itemLink(itemID) or self:itemName(itemID), self:rollPoints(raidKey, sender, itemID)));
     end
     table.sort(Parts);
 
@@ -441,7 +604,7 @@ function PP:runTest()
         RollOff:refreshRollsTable();
     end
 
-    self:print("Injected 3 fake rolls. Expect Alice 50+20=70 above Bob 65. Results announce when the timer ends.");
+    self:print("Injected 3 fake rolls. Expect Alice 50+20=70 above Bob 65. Award a roll to see the results announced.");
 end
 
 --[[ BOOT ]]
@@ -457,8 +620,10 @@ function PP:initGargul()
     GL.Events:register("PityPoints.SoftResImported", "GL.SOFTRES_IMPORTED", safe(function () PP:onSoftResImported(); end));
     GL.Events:register("PityPoints.SoftResCleared", "GL.SOFTRES_CLEARED", safe(function () PP:notify(); end));
     GL.Events:register("PityPoints.RollAccepted", "GL.ROLLOFF_ROLL_ACCEPTED", safe(function () PP:onRollAccepted(); end));
+    GL.Events:register("PityPoints.RollOffStarted", "GL.ROLLOFF_STARTED", safe(function () PP:onRollOffStarted(); end));
     GL.Events:register("PityPoints.RollOffStopped", "GL.ROLLOFF_STOPPED", safe(function () PP:onRollOffStopped(); end));
     GL.Events:register("PityPoints.ItemAwarded", "GL.ITEM_AWARDED", safe(function (...) PP:onItemAwarded(...); end));
+    GL.Events:register("PityPoints.LootAnnounced", "GL.LOOT_ANNOUNCED", safe(function () PP:onLootAnnounced(); end));
 
     wrapRollTable();
 

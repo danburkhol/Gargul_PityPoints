@@ -49,6 +49,10 @@ read_globals = {
 	"UnitClass",
 	"RAID_CLASS_COLORS",
 	"C_Timer",
+	-- Loot window
+	"GetNumLootItems",
+	"GetLootSlotLink",
+	"GetLootSourceInfo",
 	-- Items
 	"C_Item",
 	"GetItemInfo",

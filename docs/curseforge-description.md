@@ -19,9 +19,12 @@ This add-on works alongside Gargul and **requires it**. It doesn't change Gargul
 - **Close week.**
   - Adds the campaign's points per week (up to its cap) to each reserved item of everyone who attended or was benched, except items they won.
   - A preview shows exactly what each player gains, and you can reopen a week to undo it.
-- **Bonus on rolls.** Gargul ranks rolls by the total of roll plus points.
-- **Results.** The winner is announced in chat: *"[Player] wins with a roll of X and points of Y for a total of Z."*, followed by the other rolls.
+- **Bonus on rolls.** Gargul ranks rolls by the total of roll plus points, and its roll window shows *PP roll+points*.
+- **Results.** When you award the item, the winner is announced in chat: *"[Player] wins [Item] with a roll of X and points of Y for a total of Z."*, followed by the other rolls.
+- **Missing rolls.** The roll window lists soft reservers in the raid who haven't rolled yet, and a raid warning names them when the roll-off ends.
+- **Auto-award soft reserves** (optional). As master looter, an item only one raider reserved is awarded to them as soon as you open the loot window. Extra copies are left for a roll.
 - **Reset on win.** Winning an item resets the winner's points on it, in campaigns that have it on.
+- **Shared points** (optional). For players who float between teams: rolls add their points from every campaign, and resets apply in every campaign.
 - **Manager window** (`/pp`):
   - campaigns and sheets sidebar, with New campaign and Edit campaign;
   - search, sort, and +/− / reset of points;

@@ -31,6 +31,7 @@ A WoW Classic add-on that tracks soft-reserve "pity points" per team and raid, a
 - Campaigns are created only by the user (`PP:ensureRaid` from `UI/Campaign.lua`). A new softres id goes through `PP:showCampaignPicker`; `PP:createSheet(Data, raidKey)` never creates a campaign. Match sheets to campaigns with `PP:sameInstances` (it compares display names, so slug aliases match).
 - `Sheets[softresID] = { raidKey, Instances, url, note, createdAt, updatedAt, lockedAt, firstSyncedAt, lastSyncedAt, Reserves[playerKey][itemID] = order, Classes, Syncs[], Seen[playerKey] = { first, last, snapshots, bosses }, Bosses[], Rolled, Wins, Bench, Override, closedAt, closedBy, closeSummary }`.
 - `Ledger[] = { at, raid, sheet, player, itemID, delta, after, reason, by }`. Reasons are in `PP.LEDGER_REASONS`.
+- `Settings.sharePoints` (global): roll bonuses sum a player's points on the item across every campaign, and win / not-reserved resets apply in every campaign. Read points for a roll with `PP:rollPoints`, and the campaigns to reset with `PP:pointCampaigns`.
 - `Teams[]`, `lastTeam`, `lastRules` (prefills a new campaign), `ItemNames[itemID]` (name cache), `Classes[playerKey]` (class cache from every synced sheet; use `PP:playerClass`), `UI.Collapsed[raidKey]` (sidebar state), `Settings` (see `PP.DEFAULTS`).
 - Sheet dates: `createdAt`, `raidStartsAt` and `lockedAt` come from softres.it; `firstSyncedAt` is ours. `PP:sheetDate(id)` picks one per `Settings.sheetDate`.
 - `playerKey = strlower(GL:disambiguateName(name))`, which matches Gargul's softres keys.

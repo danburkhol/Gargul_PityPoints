@@ -27,13 +27,15 @@ PP.DEFAULTS = {
     -- Gargul integration: a master switch, then one per hook (see Gargul.lua)
     gargul = true,
     autoSync = true,
-    rollBonus = true,
-    rollNote = true,
+    rollBonus = true, -- Also adds "PP roll+points" to the roll window's Note column
     trackWins = true,
     announce = true,
     channel = "RAID",
+    trackMissingRolls = true,
+    autoAwardSR = false, -- Moves loot, so opt-in
     whisperReply = true,
     srFollowUp = true,
+    sharePoints = false, -- Rolls and resets span every campaign
     recordAttendance = true,
     snapshotMinutes = 5,
     sheetDate = "created",
@@ -359,6 +361,30 @@ function PP:getPoints(raidKey, playerName, itemID)
     return Items and Items[tonumber(itemID)] or 0;
 end
 
+--- The campaigns a player's points on an item count from: just raidKey, or with sharePoints every campaign holding some
+function PP:pointCampaigns(raidKey, playerName, itemID)
+    if (not DB.Settings.sharePoints) then
+        return raidKey and { raidKey, } or {};
+    end
+
+    local Keys = {};
+    for key in pairs(DB.Raids) do
+        if (key ~= self.UNASSIGNED and self:getPoints(key, playerName, itemID) > 0) then
+            tinsert(Keys, key);
+        end
+    end
+    return Keys;
+end
+
+--- The points added to a roll: the campaign's own, or with sharePoints the sum over every campaign
+function PP:rollPoints(raidKey, playerName, itemID)
+    local total = 0;
+    for _, key in ipairs(self:pointCampaigns(raidKey, playerName, itemID)) do
+        total = total + self:getPoints(key, playerName, itemID);
+    end
+    return total;
+end
+
 --- The only writer of points. Logs the change; quiet = don't notify the UI (batch callers notify once).
 function PP:setPoints(raidKey, playerName, itemID, points, reason, sheetID, quiet)
     local Raid = self:raid(raidKey);
@@ -678,6 +704,7 @@ local function initDB()
             DB.Settings[k] = type(v) == "table" and CopyTable(v) or v;
         end
     end
+    DB.Settings.rollNote = nil; -- Merged into rollBonus
 
     DB.Raids = DB.Raids or {};
     DB.Sheets = DB.Sheets or {};

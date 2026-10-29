@@ -33,6 +33,7 @@ For the original question-by-question feasibility write-up, see [Research.md](Re
 | `GL.ROLLOFF_START_FAILED` | none | watchdog (~232) | |
 | `GL.SOFTRES_IMPORTED` | none | `SoftRes:import` finalize (~959), LootReserve import (~1159) | After `materializeData()`. Also fires on re-imports of the same raid and on raiders who receive a broadcast. |
 | `GL.SOFTRES_CLEARED` | none | `SoftRes:clear` (~617) | |
+| `GL.LOOT_ANNOUNCED` | none | `DroppedLoot:lootReady` (~127) | After every `LOOT_READY`, once Gargul has announced the drops. `PackMule` listens too. |
 | `GL.ITEM_AWARDED` | `AwardEntry` | `AwardedLoot:addWinner` (~727), `receiveAwardedItem` (~1300, awards from **other** officers over comms) | |
 | `GL.ITEM_UNAWARDED` | `AwardEntry` **or nothing** | `deleteWinner` (~304), `Exporter` (~155/186 clear all, **no args**) | |
 | `GL.ITEM_AWARD_EDITED` | `AwardEntry` | `editWinner` (~423), remote edit (~1336) | `awardedTo` is already **overwritten** with the new winner. Remember the old winner yourself, keyed by `AwardEntry.checksum`. |
@@ -87,7 +88,7 @@ Offline check: a Python one-off (base64 → zlib → json) on `WTF/Account/*/Sav
 - Roll start: `MasterLooting.announceRollStart`. If `SoftRes.announceInfoWhenRolling` is on, it adds "This item was reserved by: …". No such line means nobody reserved the item.
 - "Stop your rolls!": `MasterLooting.announceRollEnd`.
 - "%s was awarded to %s. Congrats!": `AwardingLoot.awardMessagesEnabled` (raid warning if `announceAwardMessagesInRW`).
-- Gargul never announces a winner at roll end, so our results line doesn't clash.
+- Gargul never announces a winner at roll end. Our results line follows Gargul's own "was awarded to" message on award.
 
 ## Implemented in Gargul_PityPoints (see `Gargul.lua`)
 
@@ -96,10 +97,12 @@ Every hook is installed once at boot and checks `PP:gargulFeature(setting)` each
 | Requirement | Setting | Hook |
 |---|---|---|
 | Read SR / sheets | `autoSync` | `GL.SOFTRES_IMPORTED` → `PP:onSoftResImported()` → `PP:syncFromGargul()`. `PP:readSoftresSheet()` combines Gargul's materialized reserves with the decoded `importString`. |
-| Bonus added to roll and ranking | `rollBonus` | `GL.ROLLOFF_ROLL_ACCEPTED` → mutate the last `Roll`, using the points of `PP:activeRaidKey()`. With the master switch on, it also records the roller on the active sheet (attendance evidence), even when `rollBonus` is off. |
-| Roll window shows raw + bonus | `rollNote` | wrap `GL.RollOff.buildSortedRollData`. With the master switch off it passes Gargul's entries through untouched. |
-| Results announcement | `announce`, `channel` | `GL.ROLLOFF_STOPPED` + leeway delay |
-| Win → sheet + reset on win | `trackWins`, `resetOnWin` | `GL.ITEM_AWARDED` → `PP:recordWin()` |
+| Bonus added to roll and ranking, plus `PP raw+bonus` in the Note column | `rollBonus` | `GL.ROLLOFF_ROLL_ACCEPTED` → mutate the last `Roll`, using `PP:rollPoints(PP:activeRaidKey(), …)`. The note comes from our wrap of `GL.RollOff.buildSortedRollData`. With the master switch on, it also records the roller on the active sheet (attendance evidence), even when `rollBonus` is off. |
+| Results announcement | `announce`, `channel` | `GL.ITEM_AWARDED` → `PP:announceAward()`, only when `AwardEntry.awardedBy` is us. Reads `AwardEntry.Rolls` (Gargul's deep copy of the roll-off's rolls, so `ppRaw` / `ppBonus` survive). No rolls + reserved → "as the only soft reserve". |
+| Win → sheet + reset on win | `trackWins`, campaign rule `resetOnWin` | `GL.ITEM_AWARDED` → `PP:recordWin()` |
+| Missing rolls | `trackMissingRolls` | `PP:missingRollers()` = `GL.SoftRes:byItemID(id, true)` (in-group, linked IDs) minus rollers. The `buildSortedRollData` wrap appends "No roll yet" rows (`amount = 0`, `sortPriority = 99999`, `ppMissing = true`) **only** while our wrap of `refreshRollsTable` runs and `startedByMe()`, so Gargul's raider-side `RollerUI` tracker never sees them. `GL.ROLLOFF_STARTED` refreshes the table so they show before anyone rolls. `GL.ROLLOFF_STOPPED` + leeway posts a RAID_WARNING naming them. Caveat: the rows are real table rows, so the loot master can select one and Award. |
+| Auto-award a lone soft reserve | `autoAwardSR` (default off) | `GL.LOOT_ANNOUNCED` (fired at the end of `DroppedLoot:lootReady`) → `PP:onLootAnnounced()`. Master loot + master looter only. Per loot slot: exactly one distinct in-group reserver → `GL.AwardedLoot:addWinner({ winner, itemLink })`; Gargul then hands it out via `PackMule:assignLootToPlayer` when `AwardingLoot.autoAssignAfterAwardingAnItem` is on. One copy per item ID per window; `sourceGUID:itemID` is remembered for the session so reopening the window doesn't award again. |
+| Shared points | `sharePoints` (global, not a Gargul hook) | `PP:pointCampaigns` / `PP:rollPoints` in `Core.lua`: rolls sum the item's points over every campaign; `recordWin` resets them in all of them; `resetNotReservedAgain` also resets players on the new sheet in every other campaign. |
 | Attendance | `recordAttendance` (not a Gargul hook) | `ENCOUNTER_END` + a 30s ticker in `Sheets.lua` |
 | `!pp` / `!pitypoints` whisper | `whisperReply` | Our own `CHAT_MSG_WHISPER` frame. It replies only when `GL.SoftRes:userIsAllowedToBroadcast()` is true (not in a group, or master looter / assist), the same rule Gargul uses for `!sr`. Throttled per sender. |
 | `!sr` follow-up | `srFollowUp` | `hooksecurefunc(GL.SoftRes, "handleWhisperCommand", …)`. Gargul's `CHAT_MSG_WHISPER` listener (`SoftRes.lua` ~74) only calls it after its checks (`available()`, `userIsAllowedToBroadcast()`, `SoftRes.enableWhisperCommand`), so the hook inherits them. The prefixes come from `Gargul_L["!sr|!softres|!softreserve"]`. Gargul replies after `onItemLoadDo`, so ours waits 1.5s. |

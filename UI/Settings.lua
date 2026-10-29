@@ -69,6 +69,10 @@ function PP:initSettings()
         true
     ));
 
+    header("Points");
+    checkbox("sharePoints", "Share points between campaigns",
+        "For teams whose players float between groups. A roll adds the player's points on that item from every campaign, and resets (winning the item, not reserving it again) apply in every campaign.");
+
     header("Attendance");
     checkbox("recordAttendance", "Record raid attendance",
         "While you're in a raid group, note who is in the raid on every boss kill and on a timer inside the raid instance. Close week uses this to pre-tick attendees.");
@@ -88,15 +92,13 @@ function PP:initSettings()
     feature("autoSync", "Sync automatically on import",
         "When a softres.it sheet is imported in Gargul, sync it straight away. A new softres id starts a new sheet (you'll pick or create its campaign); re-importing the same sheet only records what changed.");
     feature("rollBonus", "Add points to rolls",
-        "When a player rolls on an item they soft reserved, add their pity points to the roll itself, so Gargul ranks the roll window by the total.");
-    feature("rollNote", "Show points in the roll window",
-        "Add \"PP roll+points\" to the Note column of Gargul's roll window for rolls that got a bonus.");
+        "When a player rolls on an item they soft reserved, add their pity points to the roll itself, so Gargul ranks the roll window by the total. Rolls that got a bonus show \"PP roll+points\" in the Note column.");
 
     feature("trackWins", "Record wins from Gargul awards",
         "When Gargul awards an item, record the win on the active sheet. Close week doesn't add points to items a player won, and campaigns with \"Reset points on win\" reset the winner's points.");
 
     local announce = feature("announce", "Announce results",
-        "When a roll-off you started ends, post the winner with their roll, points and total, followed by the other rolls.");
+        "When you award an item in Gargul, post the winner with their roll, points and total, followed by the other rolls.");
     local channel = register("channel", Settings.VarType.String, "Announcement channel");
     dependsOn(Settings.CreateDropdown(category, channel, function ()
         local Container = Settings.CreateControlTextContainer();
@@ -105,6 +107,11 @@ function PP:initSettings()
         end
         return Container:GetData();
     end, "Where results are posted."), announce, "gargul", "announce");
+
+    feature("trackMissingRolls", "Track missing rolls",
+        "In Gargul's roll window, list soft reservers in the raid who haven't rolled yet (\"No roll yet\"). When the roll-off ends, name them in a raid warning.");
+    feature("autoAwardSR", "Automatically award soft reserves",
+        "When you open a loot window as master looter and an item is soft reserved by only one player in the raid, award it to them through Gargul. If several copies drop, only one is awarded; the rest are left for a roll.");
 
     feature("whisperReply", "Reply to !pp whispers",
         "When a player whispers you !pp or !pitypoints, reply with all their pity points per raid. Like Gargul's !sr, only the loot master and assists reply while in a group.");

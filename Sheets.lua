@@ -178,15 +178,28 @@ local function fallbackInstances()
     return { "unknown", };
 end
 
---- Rule 6: a new week resets every item with points that the player didn't reserve again
+--- Rule 6: a new week resets every item with points that the player didn't reserve again.
+--- With sharePoints, players on the new sheet are also reset in every other campaign.
 function PP:resetNotReservedAgain(Sheet)
-    local Raid = self:raid(Sheet.raidKey);
     local reset = 0;
 
-    for key, Items in pairs(Raid.Points) do
-        for itemID in pairs(Items) do
-            if (not (Sheet.Reserves[key] and Sheet.Reserves[key][itemID])) then
-                self:setPoints(Sheet.raidKey, key, itemID, 0, "reset", Sheet.id, true);
+    for raidKey, Raid in pairs(DB.Raids) do
+        local own = raidKey == Sheet.raidKey;
+        if (own or (DB.Settings.sharePoints and raidKey ~= self.UNASSIGNED)) then
+            -- Collect first, setPoints removes entries from the table being walked
+            local Stale = {};
+            for key, Items in pairs(Raid.Points) do
+                if (own or Sheet.Reserves[key]) then
+                    for itemID in pairs(Items) do
+                        if (not (Sheet.Reserves[key] and Sheet.Reserves[key][itemID])) then
+                            tinsert(Stale, { key, itemID, });
+                        end
+                    end
+                end
+            end
+
+            for _, Entry in ipairs(Stale) do
+                self:setPoints(raidKey, Entry[1], Entry[2], 0, "reset", Sheet.id, true);
                 reset = reset + 1;
             end
         end
@@ -344,10 +357,13 @@ function PP:recordWin(playerName, itemID)
     Sheet.Wins[key] = Sheet.Wins[key] or {};
     Sheet.Wins[key][itemID] = true;
 
-    local had = self:getPoints(Sheet.raidKey, key, itemID);
+    local had = self:rollPoints(Sheet.raidKey, key, itemID);
     local reset = self:rules(Sheet.raidKey).resetOnWin and had > 0;
     if (reset) then
-        self:setPoints(Sheet.raidKey, key, itemID, 0, "win", id);
+        for _, raidKey in ipairs(self:pointCampaigns(Sheet.raidKey, key, itemID)) do
+            self:setPoints(raidKey, key, itemID, 0, "win", id, true);
+        end
+        self:notify();
     else
         self:notify();
     end
