@@ -184,9 +184,9 @@ local function findRoll(player, amount)
     end
 end
 
---- Soft reservers of the current roll-off's item who are in the group and haven't rolled yet (lowercase keys, sorted)
-function PP:missingRollers()
-    local CurrentRollOff = GL.RollOff.CurrentRollOff;
+--- Soft reservers of a roll-off's item (default: the current one) who are in the group and haven't rolled yet (lowercase keys, sorted)
+function PP:missingRollers(CurrentRollOff)
+    CurrentRollOff = CurrentRollOff or GL.RollOff.CurrentRollOff;
     local itemID = tonumber(CurrentRollOff.itemID);
     if (not itemID) then
         return {};
@@ -313,10 +313,17 @@ function PP:announceAward(AwardEntry)
         return Roll.ppRaw or Roll.amount or 0, Roll.ppBonus or 0, Roll.amount or 0;
     end
 
+    -- MS / OS rolls from players who didn't reserve the item never mention points
+    local function reserved(Roll)
+        return (Roll.ppBonus or 0) > 0 or self:isReserved(Roll.player, AwardEntry.itemID);
+    end
+
     local name = GL:disambiguateName(AwardEntry.awardedTo);
     local Won = Best[winner];
-    if (Won) then
+    if (Won and reserved(Won)) then
         send(("%s wins %s with a roll of %d and points of %d for a total of %d."):format(name, item, describe(Won)));
+    elseif (Won) then
+        send(("%s wins %s with a roll of %d."):format(name, item, Won.amount or 0));
     elseif (next(Best) == nil and self:isReserved(AwardEntry.awardedTo, AwardEntry.itemID)) then
         return send(("%s wins %s as the only soft reserve."):format(name, item));
     else
@@ -335,16 +342,21 @@ function PP:announceAward(AwardEntry)
 
     local Parts = {};
     for _, Roll in ipairs(Others) do
-        local raw, bonus, total = describe(Roll);
-        tinsert(Parts, ("%s: %d + %d = %d"):format(GL:disambiguateName(Roll.player), raw, bonus, total));
+        local player = GL:disambiguateName(Roll.player);
+        if (reserved(Roll)) then
+            local raw, bonus, total = describe(Roll);
+            tinsert(Parts, ("%s: %d + %d = %d"):format(player, raw, bonus, total));
+        else
+            tinsert(Parts, ("%s: %d"):format(player, Roll.amount or 0));
+        end
     end
     if (#Parts > 0) then
         send("Others: " .. table.concat(Parts, ", "));
     end
 end
 
-function PP:announceMissingRolls()
-    local Missing = self:missingRollers();
+function PP:announceMissingRolls(CurrentRollOff)
+    local Missing = self:missingRollers(CurrentRollOff);
     if (#Missing == 0) then
         return;
     end
@@ -354,7 +366,6 @@ function PP:announceMissingRolls()
         tinsert(Names, self:displayName(key));
     end
 
-    local CurrentRollOff = GL.RollOff.CurrentRollOff;
     GL:sendChatMessage(("No roll on %s from: %s"):format(
         CurrentRollOff.itemLink or self:itemName(CurrentRollOff.itemID), table.concat(Names, ", ")
     ), "RAID_WARNING", nil, nil, false);
@@ -371,9 +382,16 @@ function PP:onRollOffStopped()
         return;
     end
 
-    -- Gargul keeps accepting rolls for RollTracking.rollOffEndLeeway seconds after the stop
+    -- Gargul keeps accepting rolls for RollTracking.rollOffEndLeeway seconds after the stop.
+    -- Keep the roll-off that stopped, so a roll-off started within the leeway isn't warned about.
     local leeway = GL.Settings:get("RollTracking.rollOffEndLeeway", 1) or 1;
-    C_Timer.After(leeway + 0.5, safe(function () PP:announceMissingRolls(); end));
+    local Stopped = GL.RollOff.CurrentRollOff;
+    C_Timer.After(leeway + 0.5, safe(function ()
+        if (GL.RollOff.inProgress) then
+            return; -- A new roll-off (or a re-roll of this item) already started, its own stop will warn
+        end
+        PP:announceMissingRolls(Stopped);
+    end));
 end
 
 --[[ WINS ]]
@@ -405,6 +423,8 @@ end
 
 -- sourceGUID .. ":" .. itemID of drops already auto-awarded this session, so reopening the loot window doesn't award again
 local autoAwarded = {};
+-- softresID .. ":" .. itemID .. ":" .. playerKey -> copies auto-awarded this session
+local autoAwardedCopies = {};
 
 --- The single in-group reserver of an item, or nil when nobody or several players reserved it
 local function soleReserver(itemID)
@@ -417,6 +437,14 @@ local function soleReserver(itemID)
     if (only and next(Keys, only) == nil) then
         return name;
     end
+end
+
+--- Copies of the item the player already got this week: auto-awards this session, or a win on the active sheet
+local function copiesWon(copiesKey, key, itemID)
+    local Sheet = PP:sheet(PP:activeSheetID());
+    local onSheet = (Sheet and Sheet.Wins[key] and Sheet.Wins[key][itemID]) and 1 or 0;
+
+    return math.max(autoAwardedCopies[copiesKey] or 0, onSheet);
 end
 
 function PP:onLootAnnounced()
@@ -435,8 +463,19 @@ function PP:onLootAnnounced()
             Done[itemID] = true;
 
             local winner = not autoAwarded[id] and soleReserver(itemID);
+            local key = winner and self:key(winner);
+            local copiesKey = winner and ("%s:%d:%s"):format(tostring(GL.DB:get("SoftRes.MetaData.id")), itemID, key);
+
+            -- Several bosses can drop the same item (Illidari Council): a single reserve gets one copy, the rest are rolled
+            if (winner and copiesWon(copiesKey, key, itemID) >= GL.SoftRes:playerReservesOnItem(itemID, winner)) then
+                autoAwarded[id] = true;
+                self:print(("%s already got %s, so this copy isn't auto-awarded."):format(self:displayName(key), link));
+                winner = nil;
+            end
+
             if (winner) then
                 autoAwarded[id] = true;
+                autoAwardedCopies[copiesKey] = (autoAwardedCopies[copiesKey] or 0) + 1;
                 self:print(("Auto-awarding %s to %s, the only soft reserve in the raid."):format(link, self:displayName(self:key(winner))));
                 GL.AwardedLoot:addWinner({ winner = winner, itemLink = link, });
             end
